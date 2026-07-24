@@ -11,11 +11,15 @@ import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.fmt.LOCALHOST
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
+import io.nekohasekai.sagernet.fmt.internal.LoadBalanceBean
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.ui.VpnRequestActivity
+import io.nekohasekai.sagernet.utils.NetworkSelector
 import io.nekohasekai.sagernet.utils.Subnet
+import io.nekohasekai.sagernet.utils.VloadNetworkController
 import android.net.VpnService as BaseVpnService
 
 class VpnService : BaseVpnService(),
@@ -37,9 +41,64 @@ class VpnService : BaseVpnService(),
 
     override var upstreamInterfaceName: String? = null
 
+    // vload dual-network load balancing: non-null only while a
+    // TYPE_LOAD_BALANCE profile is the running session.
+    var vloadNetworkController: VloadNetworkController? = null
+        private set
+
     override suspend fun startProcesses() {
         DataStore.vpnService = this
+        setupVloadNetworksIfNeeded()
         super.startProcesses() // launch proxy instance
+    }
+
+    private fun setupVloadNetworksIfNeeded() {
+        vloadNetworkController?.stopAll()
+        vloadNetworkController = null
+
+        val profile = data.proxy?.profile ?: return
+        if (profile.type != ProxyEntity.TYPE_LOAD_BALANCE) return
+        val lb = profile.loadBalanceBean ?: return
+
+        fun selectorFor(networkKind: Int, subscriptionId: Int) = if (networkKind == LoadBalanceBean.NETWORK_SIM) {
+            NetworkSelector.Sim(subscriptionId)
+        } else {
+            NetworkSelector.WiFi
+        }
+
+        val controller = VloadNetworkController { slot, network ->
+            data.proxy?.takeIf { it.isInitialized() }?.box?.updateNetworkAvailability(
+                slot, network != null
+            )
+            updateUnderlyingNetwork()
+        }
+        vloadNetworkController = controller
+
+        controller.start(0, selectorFor(lb.slotANetworkKind, lb.slotASubscriptionId))
+        controller.start(1, selectorFor(lb.slotBNetworkKind, lb.slotBSubscriptionId))
+    }
+
+    /**
+     * Binds fd to the network currently held for [slot] (0 or 1), for a vload
+     * outbound member whose protect_path pointed at that slot. Returns false
+     * (and lets the fd's generic protection be a no-op) if no vload session
+     * or network is active for that slot.
+     */
+    fun protectSlot(fd: Int, slot: Int): Boolean {
+        val network = vloadNetworkController?.networkFor(slot) ?: return false
+        val pfd = ParcelFileDescriptor.adoptFd(fd)
+        return try {
+            network.bindSocket(pfd.fileDescriptor)
+            true
+        } catch (e: Exception) {
+            Logs.w(e)
+            false
+        } finally {
+            // Go's protect_server owns fd's lifecycle and closes it right
+            // after this call returns; detach (not close) so it isn't
+            // double-closed here.
+            pfd.detachFd()
+        }
     }
 
     override var wakeLock: PowerManager.WakeLock? = null
@@ -54,6 +113,8 @@ class VpnService : BaseVpnService(),
     override fun killProcesses() {
         conn?.close()
         conn = null
+        vloadNetworkController?.stopAll()
+        vloadNetworkController = null
         super.killProcesses()
     }
 
@@ -201,6 +262,15 @@ class VpnService : BaseVpnService(),
 
     fun updateUnderlyingNetwork(builder: Builder? = null) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            val vload = vloadNetworkController
+            val vloadNetworks = vload?.let {
+                listOfNotNull(it.networkFor(0), it.networkFor(1))
+            } ?: emptyList()
+            if (vloadNetworks.isNotEmpty()) {
+                val networks = vloadNetworks.toTypedArray()
+                builder?.setUnderlyingNetworks(networks) ?: setUnderlyingNetworks(networks)
+                return
+            }
             SagerNet.underlyingNetwork?.let {
                 builder?.setUnderlyingNetworks(arrayOf(SagerNet.underlyingNetwork))
                     ?: setUnderlyingNetworks(arrayOf(SagerNet.underlyingNetwork))

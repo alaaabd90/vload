@@ -4381,6 +4381,20 @@ public class SingBoxOptions {
 
     }
 
+    public static class WeightedOutboundMember extends SingBoxOption {
+
+        public String outbound;
+
+        public Long weight;
+
+    }
+
+    public static class Outbound_WeightedOptions extends Outbound {
+
+        public List<WeightedOutboundMember> outbounds;
+
+    }
+
     public static class Rule_DefaultOptions extends Rule {
 
         // Generate note: Listable

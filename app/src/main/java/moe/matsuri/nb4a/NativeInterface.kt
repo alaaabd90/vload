@@ -27,6 +27,10 @@ class NativeInterface : BoxPlatformInterface, NB4AInterface {
         DataStore.vpnService?.protect(fd)
     }
 
+    override fun autoDetectInterfaceControlSlot(fd: Int, slot: Int) {
+        DataStore.vpnService?.protectSlot(fd, slot)
+    }
+
     override fun openTun(singTunOptionsJson: String, tunPlatformOptionsJson: String): Long {
         if (DataStore.vpnService == null) {
             throw Exception("no VpnService")

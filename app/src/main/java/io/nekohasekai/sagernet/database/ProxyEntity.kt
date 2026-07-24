@@ -11,6 +11,7 @@ import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.http.toUri
 import io.nekohasekai.sagernet.fmt.hysteria.*
 import io.nekohasekai.sagernet.fmt.internal.ChainBean
+import io.nekohasekai.sagernet.fmt.internal.LoadBalanceBean
 import io.nekohasekai.sagernet.fmt.mieru.MieruBean
 import io.nekohasekai.sagernet.fmt.mieru.buildMieruConfig
 import io.nekohasekai.sagernet.fmt.naive.NaiveBean
@@ -71,6 +72,7 @@ data class ProxyEntity(
     var chainBean: ChainBean? = null,
     var nekoBean: NekoBean? = null,
     var configBean: ConfigBean? = null,
+    var loadBalanceBean: LoadBalanceBean? = null,
 ) : Serializable() {
 
     companion object {
@@ -95,8 +97,10 @@ data class ProxyEntity(
         const val TYPE_NEKO = 999
 
         const val TYPE_CHAIN = 8
+        const val TYPE_LOAD_BALANCE = 23
 
         val chainName by lazy { app.getString(R.string.proxy_chain) }
+        val loadBalanceName by lazy { app.getString(R.string.action_load_balance) }
 
         @JvmField
         val CREATOR = object : CREATOR<ProxyEntity>() {
@@ -177,6 +181,7 @@ data class ProxyEntity(
             TYPE_CHAIN -> chainBean = KryoConverters.chainDeserialize(byteArray)
             TYPE_NEKO -> nekoBean = KryoConverters.nekoDeserialize(byteArray)
             TYPE_CONFIG -> configBean = KryoConverters.configDeserialize(byteArray)
+            TYPE_LOAD_BALANCE -> loadBalanceBean = KryoConverters.loadBalanceDeserialize(byteArray)
         }
     }
 
@@ -198,6 +203,7 @@ data class ProxyEntity(
         TYPE_CHAIN -> chainName
         TYPE_NEKO -> nekoBean!!.displayType()
         TYPE_CONFIG -> configBean!!.displayType()
+        TYPE_LOAD_BALANCE -> loadBalanceName
         else -> "Undefined type $type"
     }
 
@@ -223,6 +229,7 @@ data class ProxyEntity(
             TYPE_CHAIN -> chainBean
             TYPE_NEKO -> nekoBean
             TYPE_CONFIG -> configBean
+            TYPE_LOAD_BALANCE -> loadBalanceBean
             else -> error("Undefined type $type")
         } ?: error("Null ${displayType()} profile")
     }
@@ -230,6 +237,7 @@ data class ProxyEntity(
     fun haveLink(): Boolean {
         return when (type) {
             TYPE_CHAIN -> false
+            TYPE_LOAD_BALANCE -> false
             else -> true
         }
     }
@@ -241,6 +249,7 @@ data class ProxyEntity(
             is ShadowTLSBean -> false
             is NekoBean -> false
             is ConfigBean -> false
+            is LoadBalanceBean -> false
             else -> true
         }
     }
@@ -360,6 +369,7 @@ data class ProxyEntity(
         chainBean = null
         configBean = null
         nekoBean = null
+        loadBalanceBean = null
 
         when (bean) {
             is SOCKSBean -> {
@@ -447,6 +457,11 @@ data class ProxyEntity(
                 configBean = bean
             }
 
+            is LoadBalanceBean -> {
+                type = TYPE_LOAD_BALANCE
+                loadBalanceBean = bean
+            }
+
             else -> error("Undefined type $type")
         }
         return this
@@ -471,6 +486,7 @@ data class ProxyEntity(
                 TYPE_ANYTLS -> AnyTLSSettingsActivity::class.java
                 TYPE_CHAIN -> ChainSettingsActivity::class.java
                 TYPE_CONFIG -> ConfigSettingActivity::class.java
+                TYPE_LOAD_BALANCE -> LoadBalanceSettingsActivity::class.java
                 else -> throw IllegalArgumentException()
             }
         ).apply {

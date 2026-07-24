@@ -79,7 +79,11 @@ fun buildConfig(
 
     val trafficMap = HashMap<String, List<ProxyEntity>>()
     val tagMap = HashMap<Long, String>()
-    val globalOutbounds = HashMap<Long, String>()
+    // Keyed by "$proxyId:$protectPath" rather than just proxyId, so the same
+    // underlying profile used for two different vload network slots (each
+    // with its own protect_path) gets two independently-built outbounds
+    // instead of one slot silently reusing the other's cached tag.
+    val globalOutbounds = HashMap<String, String>()
     val selectorNames = ArrayList<String>()
     val group = SagerDatabase.groupDao.getById(proxy.groupId)
 
@@ -246,7 +250,7 @@ fun buildConfig(
 
         // returns outbound tag
         fun buildChain(
-            chainId: Long, entity: ProxyEntity
+            chainId: Long, entity: ProxyEntity, protectPath: String? = null
         ): String {
             val profileList = entity.resolveChain()
             val chainTrafficSet = HashSet<ProxyEntity>().apply {
@@ -317,11 +321,12 @@ fun buildConfig(
 
                 // now tagOut is determined
                 if (needGlobal) {
-                    globalOutbounds[proxyEntity.id]?.let {
+                    val globalKey = "${proxyEntity.id}:${protectPath ?: ""}"
+                    globalOutbounds[globalKey]?.let {
                         if (index == 0) chainTagOut = it // single, duplicate chain
                         return@forEachIndexed
                     }
-                    globalOutbounds[proxyEntity.id] = tagOut
+                    globalOutbounds[globalKey] = tagOut
                 }
 
                 if (proxyEntity.needExternal()) { // externel outbound
@@ -401,6 +406,14 @@ fun buildConfig(
 
                     _hack_config_map["tag"] = tagOut
 
+                    // Only the outermost hop of a chain actually dials the
+                    // physical network - earlier hops tunnel logically over
+                    // it via "detour" - so protect_path (which pins vload's
+                    // two network slots) only applies here.
+                    if (protectPath != null && index == profileList.lastIndex) {
+                        _hack_config_map["protect_path"] = protectPath
+                    }
+
                     _hack_custom_config = bean.customOutboundJson
                 }
 
@@ -459,6 +472,34 @@ fun buildConfig(
             return chainTagOut
         }
 
+        // vload: wrap the two slot profiles' chains in a weighted outbound,
+        // each slot's outermost hop pinned to its own network via protect_path.
+        fun buildLoadBalance(lbProxy: ProxyEntity) {
+            val lb = lbProxy.loadBalanceBean!!
+            val slotAEntity = SagerDatabase.proxyDao.getById(lb.slotAProxyId)
+                ?: error("vload: Network A profile not found")
+            val slotBEntity = SagerDatabase.proxyDao.getById(lb.slotBProxyId)
+                ?: error("vload: Network B profile not found")
+
+            val slotATag = buildChain(lb.slotAProxyId, slotAEntity, protectPath = "protect_path_a")
+            val slotBTag = buildChain(lb.slotBProxyId, slotBEntity, protectPath = "protect_path_b")
+
+            outbounds.add(0, Outbound_WeightedOptions().apply {
+                type = "weighted"
+                tag = TAG_PROXY
+                outbounds = listOf(
+                    WeightedOutboundMember().apply {
+                        outbound = slotATag
+                        weight = lb.slotAWeight.toLong()
+                    },
+                    WeightedOutboundMember().apply {
+                        outbound = slotBTag
+                        weight = lb.slotBWeight.toLong()
+                    },
+                )
+            })
+        }
+
         // build outbounds
         if (buildSelector) {
             val list = group.id.let { SagerDatabase.proxyDao.getByGroup(it) }
@@ -471,6 +512,8 @@ fun buildConfig(
                 default_ = tagMap[proxy.id]
                 outbounds = tagMap.values.toList()
             })
+        } else if (proxy.type == ProxyEntity.TYPE_LOAD_BALANCE) {
+            buildLoadBalance(proxy)
         } else {
             buildChain(0, proxy)
         }

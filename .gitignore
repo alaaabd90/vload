@@ -19,3 +19,7 @@ jniLibs/
 # submodules
 /external
 release.keystore
+
+# gomobile-matsuri toolchain clone (created by libcore/init.sh), Kotlin daemon session state
+/libcore/gomobile/
+.kotlin/

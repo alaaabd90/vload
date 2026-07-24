@@ -130,6 +130,15 @@ object Key {
     const val ROUTE_OUTBOUND = "routeOutbound"
     const val ROUTE_PACKAGES = "routePackages"
 
+    const val LB_SLOT_A_NETWORK_KIND = "lbSlotANetworkKind"
+    const val LB_SLOT_A_SUBSCRIPTION_ID = "lbSlotASubscriptionId"
+    const val LB_SLOT_A_PROXY_ID = "lbSlotAProxyId"
+    const val LB_SLOT_A_WEIGHT = "lbSlotAWeight"
+    const val LB_SLOT_B_NETWORK_KIND = "lbSlotBNetworkKind"
+    const val LB_SLOT_B_SUBSCRIPTION_ID = "lbSlotBSubscriptionId"
+    const val LB_SLOT_B_PROXY_ID = "lbSlotBProxyId"
+    const val LB_SLOT_B_WEIGHT = "lbSlotBWeight"
+
     const val GROUP_NAME = "groupName"
     const val GROUP_TYPE = "groupType"
     const val GROUP_ORDER = "groupOrder"

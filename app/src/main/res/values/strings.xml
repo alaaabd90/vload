@@ -225,6 +225,14 @@
     <string name="action_tuic" translatable="false">TUIC</string>
     <string name="proxy_chain">Proxy Chain</string>
     <string name="custom_config">Custom Config</string>
+    <string name="action_load_balance" translatable="false">Load Balance</string>
+    <string name="load_balance_slot_a">Network A</string>
+    <string name="load_balance_slot_b">Network B</string>
+    <string name="load_balance_network_kind">Network</string>
+    <string name="load_balance_wifi" translatable="false">Wi-Fi</string>
+    <string name="load_balance_sim">SIM</string>
+    <string name="load_balance_profile">Profile</string>
+    <string name="load_balance_weight">Speed weight</string>
     <string name="balancer">Balancer</string>
     <string name="balancer_settings">Balancer Settings</string>
     <string name="balancer_type">Type</string>
