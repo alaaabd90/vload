@@ -76,6 +76,7 @@ type BoxInstance struct {
 
 	v2api        *boxapi.SbV2rayServer
 	selector     *group.Selector
+	weighted     *group.Weighted
 	pauseManager pause.Manager
 }
 
@@ -115,10 +116,13 @@ func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *Box
 		pauseManager: service.FromContext[pause.Manager](ctx),
 	}
 
-	// selector
+	// selector / weighted (vload load-balance)
 	if proxy, ok := b.Outbound().Outbound("proxy"); ok {
-		if selector, ok := proxy.(*group.Selector); ok {
-			b.selector = selector
+		switch outbound := proxy.(type) {
+		case *group.Selector:
+			b.selector = outbound
+		case *group.Weighted:
+			b.weighted = outbound
 		}
 	}
 
@@ -213,6 +217,17 @@ func (b *BoxInstance) SelectOutbound(tag string) bool {
 	return false
 }
 
+// UpdateNetworkAvailability marks one of the two vload load-balance slots
+// (0 or 1, matching the order the weighted outbound's members were
+// configured in) as available or unavailable, for failover when the
+// underlying physical network it's bound to drops or recovers. No-op if
+// the running config isn't using a weighted (vload) outbound.
+func (b *BoxInstance) UpdateNetworkAvailability(slot int32, available bool) {
+	if b.weighted != nil {
+		b.weighted.UpdateAvailability(int(slot), available)
+	}
+}
+
 func UrlTest(i *BoxInstance, link string, timeout int32) (latency int32, err error) {
 	defer device.DeferPanicToError("box.UrlTest", func(err_ error) { err = err_ })
 	var connectionTracker adapter.ConnectionTracker
@@ -235,15 +250,35 @@ func UrlTest(i *BoxInstance, link string, timeout int32) (latency int32, err err
 }
 
 var protectCloser io.Closer
+var protectSlotClosers [2]io.Closer
+
+// vload slot-specific protect paths. Each member of a "weighted" outbound
+// sets protect_path to one of these in its DialerOptions (see ConfigBuilder.kt),
+// so its dialer's fd arrives at the matching listener below instead of the
+// generic one, letting Kotlin bind it to a specific network (Network.bindSocket)
+// rather than whatever ConnectivityManager currently treats as default.
+var protectSlotPaths = [2]string{"protect_path_a", "protect_path_b"}
 
 func goServeProtect(start bool) {
 	if protectCloser != nil {
 		protectCloser.Close()
 		protectCloser = nil
 	}
+	for i, closer := range protectSlotClosers {
+		if closer != nil {
+			closer.Close()
+			protectSlotClosers[i] = nil
+		}
+	}
 	if start {
 		protectCloser = protect_server.ServeProtect("protect_path", false, 0, func(fd int) {
 			intfBox.AutoDetectInterfaceControl(int32(fd))
 		})
+		for i, path := range protectSlotPaths {
+			slot := int32(i)
+			protectSlotClosers[i] = protect_server.ServeProtect(path, false, 0, func(fd int) {
+				intfBox.AutoDetectInterfaceControlSlot(int32(fd), slot)
+			})
+		}
 	}
 }

@@ -67,6 +67,7 @@ func nekoboxAndroidOutboundRegistry() *outbound.Registry {
 
 	group.RegisterSelector(registry)
 	group.RegisterURLTest(registry)
+	group.RegisterWeighted(registry)
 
 	socks.RegisterOutbound(registry)
 	http.RegisterOutbound(registry)
