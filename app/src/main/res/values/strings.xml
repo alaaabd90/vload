@@ -233,6 +233,17 @@
     <string name="load_balance_sim">SIM</string>
     <string name="load_balance_profile">Profile</string>
     <string name="load_balance_weight">Speed weight</string>
+    <string name="action_export_locked">Export locked to device…</string>
+    <string name="export_locked_message">Enter the target device\'s HWID (Settings → Device HWID). The exported file will only import on that device.</string>
+    <string name="export_locked_hwid_hint">e.g. A1B2C3D4E5F60718</string>
+    <string name="export_locked_invalid_hwid">Enter a valid 16-character HWID</string>
+    <string name="device_hwid">Device HWID</string>
+    <string name="device_hwid_sum">Give this to whoever is locking a profile for you. Tap to copy.</string>
+    <string name="locked_profile_wrong_device">This profile is locked to device %1$s, not this device</string>
+    <string name="share_vpn_local_network">Share VPN in local network</string>
+    <string name="share_vpn_local_network_sum">Let other devices on your Wi-Fi/hotspot use this phone as a SOCKS5 proxy</string>
+    <string name="local_proxy_info">Local proxy address</string>
+    <string name="local_proxy_info_sum">Connect while \"Share VPN in local network\" is on and the VPN is connected</string>
     <string name="balancer">Balancer</string>
     <string name="balancer_settings">Balancer Settings</string>
     <string name="balancer_type">Type</string>

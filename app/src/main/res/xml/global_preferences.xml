@@ -204,6 +204,18 @@
             app:key="allowAccess"
             app:summary="@string/allow_access_sum"
             app:title="@string/allow_access" />
+        <SwitchPreference
+            app:defaultValue="false"
+            app:key="shareVpnLocalNetwork"
+            app:summary="@string/share_vpn_local_network_sum"
+            app:title="@string/share_vpn_local_network" />
+        <Preference
+            app:key="localProxyInfo"
+            app:summary="@string/local_proxy_info_sum"
+            app:title="@string/local_proxy_info" />
+        <Preference
+            app:key="deviceHwid"
+            app:title="@string/device_hwid" />
     </PreferenceCategory>
 
     <PreferenceCategory app:title="@string/cag_misc">

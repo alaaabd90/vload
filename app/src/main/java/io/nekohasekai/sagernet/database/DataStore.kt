@@ -234,6 +234,8 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var frontProxyTmp by profileCacheStore.stringToInt(Key.GROUP_FRONT_PROXY)
     var landingProxyTmp by profileCacheStore.stringToInt(Key.GROUP_LANDING_PROXY)
 
+    var shareVpnLocalNetwork by configurationStore.boolean(Key.SHARE_VPN_LOCAL_NETWORK)
+
     var lbSlotANetworkKind by profileCacheStore.stringToInt(Key.LB_SLOT_A_NETWORK_KIND)
     var lbSlotASubscriptionId by profileCacheStore.stringToInt(Key.LB_SLOT_A_SUBSCRIPTION_ID) { -1 }
     var lbSlotAProxyId by profileCacheStore.long(Key.LB_SLOT_A_PROXY_ID) { -1L }

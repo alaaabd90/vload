@@ -13,9 +13,12 @@ import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.bg.LocalShareServer
 import io.nekohasekai.sagernet.database.preference.EditTextPreferenceModifiers
 import io.nekohasekai.sagernet.ktx.*
+import io.nekohasekai.sagernet.utils.HwidManager
 import io.nekohasekai.sagernet.utils.Theme
+import io.nekohasekai.sagernet.widget.QRCodeDialog
 import moe.matsuri.nb4a.ui.*
 
 class SettingsPreferenceFragment : PreferenceFragmentCompat() {
@@ -61,6 +64,37 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             Theme.applyNightTheme()
             true
         }
+        val deviceHwid = findPreference<Preference>("deviceHwid")!!
+        val hwid = HwidManager.compute(requireContext())
+        deviceHwid.summary = hwid
+        deviceHwid.setOnPreferenceClickListener {
+            val success = SagerNet.trySetPrimaryClip(hwid)
+            if (context != null) {
+                android.widget.Toast.makeText(
+                    context,
+                    if (success) R.string.action_export_msg else R.string.action_export_err,
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+            true
+        }
+
+        val localProxyInfo = findPreference<Preference>("localProxyInfo")!!
+        localProxyInfo.setOnPreferenceClickListener {
+            val ip = LocalShareServer.getLocalIp()
+            val text = if (DataStore.shareVpnLocalNetwork && ip != null) {
+                "socks://$ip:${LocalShareServer.LISTEN_PORT}"
+            } else if (!DataStore.shareVpnLocalNetwork) {
+                getString(R.string.share_vpn_local_network_sum)
+            } else {
+                "?"
+            }
+            QRCodeDialog(text, getString(R.string.local_proxy_info)).showAllowingStateLoss(
+                parentFragmentManager
+            )
+            true
+        }
+
         val mixedPort = findPreference<EditTextPreference>(Key.MIXED_PORT)!!
         val serviceMode = findPreference<Preference>(Key.SERVICE_MODE)!!
         val allowAccess = findPreference<Preference>(Key.ALLOW_ACCESS)!!

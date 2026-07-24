@@ -15,6 +15,7 @@ import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -77,6 +78,8 @@ import io.nekohasekai.sagernet.ktx.snackbar
 import io.nekohasekai.sagernet.ktx.startFilesForResult
 import io.nekohasekai.sagernet.ktx.tryToShow
 import io.nekohasekai.sagernet.plugin.PluginManager
+import io.nekohasekai.sagernet.utils.HwidManager
+import io.nekohasekai.sagernet.utils.LockedProfileCrypto
 import io.nekohasekai.sagernet.ui.profile.ChainSettingsActivity
 import io.nekohasekai.sagernet.ui.profile.HttpSettingsActivity
 import io.nekohasekai.sagernet.ui.profile.LoadBalanceSettingsActivity
@@ -307,12 +310,40 @@ class ConfigurationFragment @JvmOverloads constructor(
                         }
                         zip.closeQuietly()
                     } else {
-                        val fileText =
-                            requireContext().contentResolver.openInputStream(file)!!.use {
-                                it.bufferedReader().readText()
+                        val rawBytes = requireContext().contentResolver.openInputStream(file)!!.use {
+                            it.readBytes()
+                        }
+                        // vload: check for a locked-profile (see LockedProfileCrypto) before
+                        // treating the bytes as plain text - locked files aren't valid UTF-8.
+                        when (val locked =
+                            LockedProfileCrypto.tryDecrypt(rawBytes, HwidManager.compute(requireContext()))) {
+                            is LockedProfileCrypto.DecryptResult.WrongDevice -> {
+                                onMainDispatcher {
+                                    snackbar(
+                                        getString(
+                                            R.string.locked_profile_wrong_device, locked.lockedToHwid
+                                        )
+                                    ).show()
+                                }
+                                return@runOnDefaultDispatcher
                             }
-                        RawUpdater.parseRaw(fileText, fileName ?: "")
-                            ?.let { pl -> proxies.addAll(pl) }
+
+                            is LockedProfileCrypto.DecryptResult.Error -> {
+                                onMainDispatcher { snackbar(locked.message).show() }
+                                return@runOnDefaultDispatcher
+                            }
+
+                            is LockedProfileCrypto.DecryptResult.Decrypted -> {
+                                RawUpdater.parseRaw(locked.plaintext, fileName ?: "")
+                                    ?.let { pl -> proxies.addAll(pl) }
+                            }
+
+                            LockedProfileCrypto.DecryptResult.NotLocked -> {
+                                val fileText = String(rawBytes, Charsets.UTF_8)
+                                RawUpdater.parseRaw(fileText, fileName ?: "")
+                                    ?.let { pl -> proxies.addAll(pl) }
+                            }
+                        }
                     }
                     if (proxies.isEmpty()) onMainDispatcher {
                         snackbar(getString(R.string.no_proxies_found_in_file)).show()
@@ -1703,6 +1734,10 @@ class ConfigurationFragment @JvmOverloads constructor(
                                 (parentFragment as ConfigurationFragment).exportConfig, cfg.second
                             )
                         }
+
+                        R.id.action_config_export_locked -> {
+                            (parentFragment as ConfigurationFragment).promptExportLocked(entity)
+                        }
                     }
                 } catch (e: Exception) {
                     Logs.w(e)
@@ -1738,6 +1773,67 @@ class ConfigurationFragment @JvmOverloads constructor(
                 }
             }
         }
+
+    // vload: locked-profile export, encrypted so it only decrypts on the
+    // device whose HWID it's addressed to (see LockedProfileCrypto).
+    private var pendingLockedExport: ByteArray? = null
+
+    private val exportLockedConfig =
+        registerForActivityResult(ActivityResultContracts.CreateDocument()) { data ->
+            val bytes = pendingLockedExport
+            if (data != null && bytes != null) {
+                runOnDefaultDispatcher {
+                    try {
+                        (requireActivity() as MainActivity).contentResolver.openOutputStream(data)!!
+                            .use { it.write(bytes) }
+                        onMainDispatcher {
+                            snackbar(getString(R.string.action_export_msg)).show()
+                        }
+                    } catch (e: Exception) {
+                        Logs.w(e)
+                        onMainDispatcher {
+                            snackbar(e.readableMessage).show()
+                        }
+                    } finally {
+                        pendingLockedExport = null
+                    }
+                }
+            }
+        }
+
+    fun promptExportLocked(entity: ProxyEntity) {
+        val input = EditText(requireContext()).apply {
+            hint = getString(R.string.export_locked_hwid_hint)
+            filters = arrayOf(android.text.InputFilter.LengthFilter(16))
+        }
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.action_export_locked)
+            .setMessage(R.string.export_locked_message)
+            .setView(input)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val targetHwid = input.text.toString().trim().uppercase()
+                if (targetHwid.length != 16 || !targetHwid.all { it.isDigit() || it in 'A'..'F' }) {
+                    snackbar(getString(R.string.export_locked_invalid_hwid)).show()
+                    return@setPositiveButton
+                }
+                runOnDefaultDispatcher {
+                    try {
+                        val cfg = entity.exportConfig()
+                        pendingLockedExport = LockedProfileCrypto.encryptForHwid(cfg.first, targetHwid)
+                        onMainDispatcher {
+                            startFilesForResult(exportLockedConfig, "${cfg.second.substringBeforeLast('.')}.vloadp")
+                        }
+                    } catch (e: Exception) {
+                        Logs.w(e)
+                        onMainDispatcher {
+                            snackbar(e.readableMessage).show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
 
     private fun cancelSearch(searchView: SearchView) {
         searchView.onActionViewCollapsed()

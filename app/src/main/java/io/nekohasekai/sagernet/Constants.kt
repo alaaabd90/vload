@@ -130,6 +130,8 @@ object Key {
     const val ROUTE_OUTBOUND = "routeOutbound"
     const val ROUTE_PACKAGES = "routePackages"
 
+    const val SHARE_VPN_LOCAL_NETWORK = "shareVpnLocalNetwork"
+
     const val LB_SLOT_A_NETWORK_KIND = "lbSlotANetworkKind"
     const val LB_SLOT_A_SUBSCRIPTION_ID = "lbSlotASubscriptionId"
     const val LB_SLOT_A_PROXY_ID = "lbSlotAProxyId"

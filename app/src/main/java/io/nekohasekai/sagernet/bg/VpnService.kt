@@ -80,19 +80,23 @@ class VpnService : BaseVpnService(),
 
     /**
      * Binds fd to the network currently held for [slot] (0 or 1), for a vload
-     * outbound member whose protect_path pointed at that slot. Returns false
-     * (and lets the fd's generic protection be a no-op) if no vload session
-     * or network is active for that slot.
+     * outbound member whose protect_path pointed at that slot. If that slot's
+     * network is momentarily unavailable (e.g. mid handover) or bindSocket
+     * fails, falls back to the generic protect() rather than leaving fd
+     * unbound: an unbound socket isn't excluded from our own VPN capture, so
+     * it would loop back into our own tun instead of reaching the network,
+     * which is what caused connections to hang/reset intermittently under
+     * Load Balance specifically.
      */
     fun protectSlot(fd: Int, slot: Int): Boolean {
-        val network = vloadNetworkController?.networkFor(slot) ?: return false
+        val network = vloadNetworkController?.networkFor(slot) ?: return protect(fd)
         val pfd = ParcelFileDescriptor.adoptFd(fd)
         return try {
             network.bindSocket(pfd.fileDescriptor)
             true
         } catch (e: Exception) {
             Logs.w(e)
-            false
+            protect(fd)
         } finally {
             // Go's protect_server owns fd's lifecycle and closes it right
             // after this call returns; detach (not close) so it isn't

@@ -213,6 +213,9 @@ class BaseService {
 
         suspend fun startProcesses() {
             data.proxy!!.launch()
+            if (DataStore.shareVpnLocalNetwork) {
+                LocalShareServer.startShared(DataStore.mixedPort)
+            }
         }
 
         fun startRunner() {
@@ -223,6 +226,7 @@ class BaseService {
 
         fun killProcesses() {
             data.proxy?.close()
+            LocalShareServer.stopShared()
             wakeLock?.apply {
                 release()
                 wakeLock = null
