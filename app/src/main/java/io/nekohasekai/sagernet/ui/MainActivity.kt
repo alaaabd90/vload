@@ -7,10 +7,13 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.os.RemoteException
+import android.provider.Settings
 import android.view.KeyEvent
 import android.view.MenuItem
 import androidx.activity.addCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.IdRes
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -124,6 +127,8 @@ class MainActivity : ThemedActivity(),
                 .setPositiveButton(android.R.string.ok, null)
                 .show()
         }
+
+        requestIgnoreBatteryOptimizations()
     }
 
     fun refreshNavMenu(clashApi: Boolean) {
@@ -399,6 +404,31 @@ class MainActivity : ThemedActivity(),
 
     private val connect = registerForActivityResult(VpnRequestActivity.StartService()) {
         if (it) snackbar(R.string.vpn_permission_denied).show()
+    }
+
+    private val batteryOptimizationExemption =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {}
+
+    // Once the screen sleeps and the device enters Doze, Android throttles
+    // background network/CPU scheduling for apps not exempted from battery
+    // optimization - this can visibly slow/stall the dual-network load
+    // balance and LAN-share connections even though the VPN itself stays up.
+    // isIgnoringBatteryOptimizations short-circuits this to a no-op on every
+    // later launch once granted, so this won't nag an already-exempted
+    // install; declining just asks again next launch instead of silently
+    // staying throttled forever.
+    private fun requestIgnoreBatteryOptimizations() {
+        val powerManager = getSystemService(POWER_SERVICE) as? PowerManager
+        val alreadyExempt = powerManager?.isIgnoringBatteryOptimizations(packageName) ?: true
+        if (!alreadyExempt) {
+            runCatching {
+                batteryOptimizationExemption.launch(
+                    Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                )
+            }
+        }
     }
 
     // may NOT called when app is in background
