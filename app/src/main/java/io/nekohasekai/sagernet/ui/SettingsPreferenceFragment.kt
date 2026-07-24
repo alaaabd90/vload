@@ -81,17 +81,31 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
 
         val localProxyInfo = findPreference<Preference>("localProxyInfo")!!
         localProxyInfo.setOnPreferenceClickListener {
-            val ip = LocalShareServer.getLocalIp()
-            val text = if (DataStore.shareVpnLocalNetwork && ip != null) {
-                "socks://$ip:${LocalShareServer.LISTEN_PORT}"
-            } else if (!DataStore.shareVpnLocalNetwork) {
-                getString(R.string.share_vpn_local_network_sum)
+            val addresses = LocalShareServer.getLocalAddresses()
+            if (DataStore.shareVpnLocalNetwork && addresses.isNotEmpty()) {
+                // Show every detected address as readable text (e.g. both the
+                // home Wi-Fi IP and this phone's own hotspot IP, when both are
+                // active at once) since the right one to use depends on how
+                // the other device is connected to this phone, not something
+                // that can be guessed - QR-encode just the first one.
+                val text = addresses.joinToString("\n") { (label, ip) ->
+                    "$ip:${LocalShareServer.LISTEN_PORT} ($label)"
+                }
+                val primary = addresses.first().second
+                QRCodeDialog("socks://$primary:${LocalShareServer.LISTEN_PORT}", text).showAllowingStateLoss(
+                    parentFragmentManager
+                )
             } else {
-                "?"
+                android.widget.Toast.makeText(
+                    context,
+                    if (!DataStore.shareVpnLocalNetwork) {
+                        R.string.share_vpn_local_network_sum
+                    } else {
+                        R.string.local_proxy_info_sum
+                    },
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
             }
-            QRCodeDialog(text, getString(R.string.local_proxy_info)).showAllowingStateLoss(
-                parentFragmentManager
-            )
             true
         }
 

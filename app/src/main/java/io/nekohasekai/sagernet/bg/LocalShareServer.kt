@@ -1,5 +1,7 @@
 package io.nekohasekai.sagernet.bg
 
+import android.net.NetworkCapabilities
+import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.ktx.Logs
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
@@ -36,14 +38,33 @@ class LocalShareServer(private val upstreamPort: Int) {
 
         fun isSharedRunning() = shared != null
 
-        /** Best-effort LAN-reachable IP for display in the UI, excluding VPN/loopback ranges. */
-        fun getLocalIp(): String? {
-            val preferredNames = setOf("wlan0", "ap0", "swlan0", "wlan1", "softap0", "wlan_hotspot")
+        /**
+         * All LAN-reachable IPs for display in the UI (label to address),
+         * excluding VPN/loopback/cellular ranges. Hotspot interface names
+         * vary wildly by OEM (seen: wlan2 on this Honor device, ap0/softap0
+         * elsewhere) so rather than maintain a growing name whitelist, every
+         * non-excluded interface is a candidate; whichever one matches the
+         * WiFi transport network's own address (queried via
+         * ConnectivityManager, not by interface name) is labelled "Wi-Fi",
+         * and any other candidate is the local hotspot AP by elimination.
+         */
+        fun getLocalAddresses(): List<Pair<String, String>> {
             val excludedNames = setOf("tun0", "tun1", "lo", "dummy0")
             val excludedPrefixes = listOf("tun", "vpn", "dummy", "rmnet", "v4-", "clat")
 
             val interfaces = runCatching { NetworkInterface.getNetworkInterfaces()?.toList() }
-                .getOrNull() ?: return null
+                .getOrNull() ?: return emptyList()
+
+            val wifiIp = runCatching {
+                val cm = SagerNet.connectivity
+                cm.allNetworks.asSequence()
+                    .filter { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true }
+                    .mapNotNull { cm.getLinkProperties(it) }
+                    .flatMap { it.linkAddresses.asSequence() }
+                    .map { it.address }
+                    .firstOrNull { !it.isLoopbackAddress && it.hostAddress?.contains(':') == false }
+                    ?.hostAddress
+            }.getOrNull()
 
             fun candidateAddress(iface: NetworkInterface): String? {
                 if (!iface.isUp) return null
@@ -61,15 +82,15 @@ class LocalShareServer(private val upstreamPort: Int) {
                 return null
             }
 
+            val result = mutableListOf<Pair<String, String>>()
+            val seen = mutableSetOf<String>()
             for (iface in interfaces) {
-                if (iface.name in preferredNames) {
-                    candidateAddress(iface)?.let { return it }
-                }
+                val host = candidateAddress(iface) ?: continue
+                if (!seen.add(host)) continue
+                val label = if (host == wifiIp) "Wi-Fi" else "Hotspot"
+                result += label to host
             }
-            for (iface in interfaces) {
-                candidateAddress(iface)?.let { return it }
-            }
-            return null
+            return result
         }
     }
 
@@ -115,7 +136,6 @@ class LocalShareServer(private val upstreamPort: Int) {
 
     private fun handleClient(client: Socket) {
         activeConnections.incrementAndGet()
-        android.util.Log.e("LocalShareServer", "accepted client, dialing upstream port $upstreamPort")
         Thread({
             try {
                 client.tcpNoDelay = true
@@ -124,7 +144,6 @@ class LocalShareServer(private val upstreamPort: Int) {
                 upstream.tcpNoDelay = true
                 upstream.soTimeout = 30_000
                 upstream.connect(InetSocketAddress("127.0.0.1", upstreamPort), 5_000)
-                android.util.Log.e("LocalShareServer", "upstream connected OK")
 
                 val t1 = Thread({ relay(client, upstream) }, "LocalShareServer-c2u").apply { isDaemon = true }
                 val t2 = Thread({ relay(upstream, client) }, "LocalShareServer-u2c").apply { isDaemon = true }
@@ -133,7 +152,6 @@ class LocalShareServer(private val upstreamPort: Int) {
                 t1.join()
                 t2.join()
             } catch (e: Exception) {
-                android.util.Log.e("LocalShareServer", "handleClient failed", e)
                 Logs.w(e)
             } finally {
                 runCatching { client.close() }

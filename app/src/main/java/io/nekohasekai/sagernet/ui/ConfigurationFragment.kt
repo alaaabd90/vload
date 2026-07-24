@@ -296,6 +296,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                                     .let(cursor::getString)
                             }
                     val proxies = mutableListOf<AbstractBean>()
+                    var isLockedImport = false
                     if (fileName != null && fileName.endsWith(".zip")) {
                         // try parse wireguard zip
                         val zip =
@@ -336,6 +337,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                             is LockedProfileCrypto.DecryptResult.Decrypted -> {
                                 RawUpdater.parseRaw(locked.plaintext, fileName ?: "")
                                     ?.let { pl -> proxies.addAll(pl) }
+                                isLockedImport = true
                             }
 
                             LockedProfileCrypto.DecryptResult.NotLocked -> {
@@ -347,7 +349,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                     }
                     if (proxies.isEmpty()) onMainDispatcher {
                         snackbar(getString(R.string.no_proxies_found_in_file)).show()
-                    } else import(proxies)
+                    } else import(proxies, locked = isLockedImport)
                 } catch (e: SubscriptionFoundException) {
                     (requireActivity() as MainActivity).importSubscription(e.link.toUri())
                 } catch (e: Exception) {
@@ -359,10 +361,14 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
         }
 
-    suspend fun import(proxies: List<AbstractBean>) {
+    suspend fun import(proxies: List<AbstractBean>, locked: Boolean = false) {
         val targetId = DataStore.selectedGroupForImport()
         for (proxy in proxies) {
-            ProfileManager.createProfile(targetId, proxy)
+            val profile = ProfileManager.createProfile(targetId, proxy)
+            if (locked) {
+                profile.lockedImport = true
+                ProfileManager.updateProfile(profile)
+            }
         }
         onMainDispatcher {
             DataStore.editingGroup = targetId
@@ -1564,8 +1570,14 @@ class ConfigurationFragment @JvmOverloads constructor(
                 }
 
                 profileName.text = proxyEntity.displayName()
-                profileType.text = proxyEntity.displayType()
-                profileType.setTextColor(requireContext().getProtocolColor(proxyEntity.type))
+                if (proxyEntity.lockedImport) {
+                    // Locked-imported profile: usable, but its protocol/server
+                    // details shouldn't be visible on the device it was locked to.
+                    profileType.text = ""
+                } else {
+                    profileType.text = proxyEntity.displayType()
+                    profileType.setTextColor(requireContext().getProtocolColor(proxyEntity.type))
+                }
 
                 var rx = proxyEntity.rx
                 var tx = proxyEntity.tx
@@ -1590,7 +1602,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                     address = address.substring(0, 27) + "..."
                 }
 
-                if (proxyEntity.requireBean().name.isBlank() || !pf.alwaysShowAddress) {
+                if (proxyEntity.requireBean().name.isBlank() || !pf.alwaysShowAddress || proxyEntity.lockedImport) {
                     address = ""
                 }
 
@@ -1628,11 +1640,15 @@ class ConfigurationFragment @JvmOverloads constructor(
                 }
 
                 editButton.setOnClickListener {
-                    it.context.startActivity(
-                        proxyEntity.settingIntent(
-                            it.context, proxyGroup.type == GroupType.SUBSCRIPTION
+                    if (proxyEntity.lockedImport) {
+                        snackbar(R.string.locked_profile_no_edit).show()
+                    } else {
+                        it.context.startActivity(
+                            proxyEntity.settingIntent(
+                                it.context, proxyGroup.type == GroupType.SUBSCRIPTION
+                            )
                         )
-                    )
+                    }
                 }
 
                 removeButton.setOnClickListener {
@@ -1688,7 +1704,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                         popup.show()
                     }
 
-                    if (!(select || proxyEntity.type == ProxyEntity.TYPE_CHAIN || proxyEntity.type == ProxyEntity.TYPE_LOAD_BALANCE)) {
+                    if (!(select || proxyEntity.type == ProxyEntity.TYPE_CHAIN || proxyEntity.type == ProxyEntity.TYPE_LOAD_BALANCE || proxyEntity.lockedImport)) {
                         onMainDispatcher {
                             shareLayer.setBackgroundColor(Color.TRANSPARENT)
                             shareButton.setImageResource(R.drawable.ic_social_share)
@@ -1818,10 +1834,16 @@ class ConfigurationFragment @JvmOverloads constructor(
                 }
                 runOnDefaultDispatcher {
                     try {
-                        val cfg = entity.exportConfig()
-                        pendingLockedExport = LockedProfileCrypto.encryptForHwid(cfg.first, targetHwid)
+                        // Use the same shareable-link format as the plain QR/clipboard
+                        // share actions (not exportConfig()'s raw sing-box JSON), so the
+                        // name and protocol type round-trip correctly through
+                        // RawUpdater.parseRaw on import instead of collapsing into an
+                        // unnamed generic "ConfigBean".
+                        val link = entity.toStdLink()
+                        val fileName = entity.displayName()
+                        pendingLockedExport = LockedProfileCrypto.encryptForHwid(link, targetHwid)
                         onMainDispatcher {
-                            startFilesForResult(exportLockedConfig, "${cfg.second.substringBeforeLast('.')}.vloadp")
+                            startFilesForResult(exportLockedConfig, "$fileName.vloadp")
                         }
                     } catch (e: Exception) {
                         Logs.w(e)

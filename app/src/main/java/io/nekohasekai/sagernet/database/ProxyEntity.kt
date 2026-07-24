@@ -73,6 +73,7 @@ data class ProxyEntity(
     var nekoBean: NekoBean? = null,
     var configBean: ConfigBean? = null,
     var loadBalanceBean: LoadBalanceBean? = null,
+    @ColumnInfo(defaultValue = "0") var lockedImport: Boolean = false,
 ) : Serializable() {
 
     companion object {

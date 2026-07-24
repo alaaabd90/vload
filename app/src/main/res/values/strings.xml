@@ -240,6 +240,7 @@
     <string name="device_hwid">Device HWID</string>
     <string name="device_hwid_sum">Give this to whoever is locking a profile for you. Tap to copy.</string>
     <string name="locked_profile_wrong_device">This profile is locked to device %1$s, not this device</string>
+    <string name="locked_profile_no_edit">This profile is locked - its configuration can\'t be viewed or edited</string>
     <string name="share_vpn_local_network">Share VPN in local network</string>
     <string name="share_vpn_local_network_sum">Let other devices on your Wi-Fi/hotspot use this phone as a SOCKS5 proxy</string>
     <string name="local_proxy_info">Local proxy address</string>
