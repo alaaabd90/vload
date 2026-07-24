@@ -288,7 +288,12 @@ fun buildConfig(
                 // first profile set as global
                 if (index == profileList.lastIndex) {
                     needGlobal = true
-                    tagOut = "g-" + proxyEntity.id
+                    // Suffix by protectPath too: the same profile used for
+                    // both vload slots must still get two distinct tags,
+                    // not just two distinct globalOutbounds cache entries -
+                    // otherwise both end up named "g-<id>" and sing-box
+                    // rejects the config as a duplicate outbound tag.
+                    tagOut = "g-" + proxyEntity.id + (protectPath?.let { "-$it" } ?: "")
                     bypassDNSBeans += proxyEntity.requireBean()
                 }
 
