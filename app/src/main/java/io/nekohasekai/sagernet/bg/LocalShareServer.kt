@@ -58,7 +58,15 @@ class LocalShareServer(private val upstreamPort: Int) {
             val wifiIp = runCatching {
                 val cm = SagerNet.connectivity
                 cm.allNetworks.asSequence()
-                    .filter { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true }
+                    .filter {
+                        // Require actual internet capability, not just TRANSPORT_WIFI -
+                        // some Android versions also expose a local-only/tethering
+                        // network over the same transport, which would otherwise get
+                        // misidentified as the Wi-Fi STA connection here.
+                        val nc = cm.getNetworkCapabilities(it)
+                        nc?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true &&
+                            nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    }
                     .mapNotNull { cm.getLinkProperties(it) }
                     .flatMap { it.linkAddresses.asSequence() }
                     .map { it.address }
