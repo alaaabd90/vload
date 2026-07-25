@@ -3,11 +3,13 @@ package io.nekohasekai.sagernet.bg
 import android.net.NetworkCapabilities
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.ktx.Logs
+import io.nekohasekai.sagernet.ktx.readableMessage
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Exposes the local mixed (SOCKS5) inbound vload already runs for its own
@@ -124,7 +126,9 @@ class LocalShareServer(private val upstreamPort: Int) {
                         if (running) Logs.w(e)
                         break
                     }
+                    Logs.i("vload-share: accepted ${client.remoteSocketAddress} (active=${activeConnections.get()})")
                     if (activeConnections.get() >= MAX_CONNECTIONS) {
+                        Logs.w("vload-share: rejecting ${client.remoteSocketAddress}, at MAX_CONNECTIONS")
                         runCatching { client.close() }
                         continue
                     }
@@ -144,7 +148,11 @@ class LocalShareServer(private val upstreamPort: Int) {
 
     private fun handleClient(client: Socket) {
         activeConnections.incrementAndGet()
+        val remote = client.remoteSocketAddress
+        val startedAt = System.currentTimeMillis()
         Thread({
+            val c2u = AtomicLong(0)
+            val u2c = AtomicLong(0)
             try {
                 client.tcpNoDelay = true
                 client.soTimeout = 30_000
@@ -153,22 +161,24 @@ class LocalShareServer(private val upstreamPort: Int) {
                 upstream.soTimeout = 30_000
                 upstream.connect(InetSocketAddress("127.0.0.1", upstreamPort), 5_000)
 
-                val t1 = Thread({ relay(client, upstream) }, "LocalShareServer-c2u").apply { isDaemon = true }
-                val t2 = Thread({ relay(upstream, client) }, "LocalShareServer-u2c").apply { isDaemon = true }
+                val t1 = Thread({ relay(client, upstream, c2u) }, "LocalShareServer-c2u").apply { isDaemon = true }
+                val t2 = Thread({ relay(upstream, client, u2c) }, "LocalShareServer-u2c").apply { isDaemon = true }
                 t1.start()
                 t2.start()
                 t1.join()
                 t2.join()
             } catch (e: Exception) {
-                Logs.w(e)
+                Logs.w("vload-share: session $remote failed: ${e.readableMessage}")
             } finally {
+                val elapsed = System.currentTimeMillis() - startedAt
+                Logs.i("vload-share: closed $remote after ${elapsed}ms, sent=${c2u.get()}B received=${u2c.get()}B")
                 runCatching { client.close() }
                 activeConnections.decrementAndGet()
             }
         }, "LocalShareServer-client").apply { isDaemon = true }.start()
     }
 
-    private fun relay(from: Socket, to: Socket) {
+    private fun relay(from: Socket, to: Socket, counter: AtomicLong) {
         try {
             val input = from.getInputStream()
             val output = to.getOutputStream()
@@ -177,6 +187,7 @@ class LocalShareServer(private val upstreamPort: Int) {
                 val read = input.read(buffer)
                 if (read < 0) break
                 output.write(buffer, 0, read)
+                counter.addAndGet(read.toLong())
             }
         } catch (_: Exception) {
             // normal on connection close/timeout
