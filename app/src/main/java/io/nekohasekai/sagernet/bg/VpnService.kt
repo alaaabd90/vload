@@ -67,9 +67,10 @@ class VpnService : BaseVpnService(),
         }
 
         val controller = VloadNetworkController { slot, network ->
-            data.proxy?.takeIf { it.isInitialized() }?.box?.updateNetworkAvailability(
-                slot, network != null
-            )
+            val proxy = data.proxy
+            val delivered = proxy?.takeIf { it.isInitialized() }
+            Logs.i("vload: slot $slot network=${network?.toString() ?: "lost"} deliveredToBox=${delivered != null}")
+            delivered?.box?.updateNetworkAvailability(slot, network != null)
             updateUnderlyingNetwork()
         }
         vloadNetworkController = controller
