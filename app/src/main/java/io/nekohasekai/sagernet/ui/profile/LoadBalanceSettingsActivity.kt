@@ -76,7 +76,7 @@ class LoadBalanceSettingsActivity :
                 android.R.layout.simple_spinner_dropdown_item,
                 listOf(getString(R.string.load_balance_wifi), getString(R.string.load_balance_sim))
             )
-            weightSeekBar.max = 99
+            weightSeekBar.max = 1000
         }
 
         fun sims(): List<SimSlotInfo> = SimSlots.listActiveSims()
