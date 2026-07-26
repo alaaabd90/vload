@@ -65,15 +65,26 @@ jobs:
       - name: Gradle Build
         env:
           BUILD_PLUGIN: none
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+          ALIAS_NAME: ${{ secrets.ALIAS_NAME }}
+          ALIAS_PASS: ${{ secrets.ALIAS_PASS }}
         run: |
           echo "sdk.dir=${ANDROID_HOME}" > local.properties
           echo "ndk.dir=${ANDROID_HOME}/ndk/25.0.8775105" >> local.properties
           export LOCAL_PROPERTIES="${{ secrets.LOCAL_PROPERTIES }}"
+          echo "${{ secrets.RELEASE_KEYSTORE_B64 }}" | base64 -d > release.keystore
           ./run init action gradle
           ./gradlew app:assembleOssRelease
           APK=$(find app/build/outputs/apk -name '*arm64-v8a*.apk')
           APK=$(dirname $APK)
           echo "APK=$APK" >> $GITHUB_ENV
+      - name: Verify APKs are signed
+        run: |
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          for apk in "$APK"/*.apk; do
+            echo "verifying $apk"
+            "$apksigner" verify "$apk"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: APKs
