@@ -53,11 +53,14 @@
         android:id="@+id/weight_label"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp" />
+        android:layout_marginTop="8dp"
+        android:text="@string/load_balance_weight" />
 
-    <SeekBar
-        android:id="@+id/weight_seekbar"
+    <EditText
+        android:id="@+id/weight_edit_text"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content" />
+        android:layout_height="wrap_content"
+        android:inputType="number"
+        android:maxLength="4" />
 
 </LinearLayout>

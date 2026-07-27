@@ -1,9 +1,7 @@
 package libcore
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"libcore/procfs"
 	"log"
@@ -13,17 +11,14 @@ import (
 
 	"github.com/matsuridayo/libneko/neko_log"
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/process"
-	"github.com/sagernet/sing-box/experimental/libbox/platform"
 	sblog "github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	tun "github.com/sagernet/sing-tun"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
-	N "github.com/sagernet/sing/common/network"
 )
 
-var boxPlatformInterfaceInstance platform.Interface = &boxPlatformInterfaceWrapper{}
+var boxPlatformInterfaceInstance adapter.PlatformInterface = &boxPlatformInterfaceWrapper{}
 
 type boxPlatformInterfaceWrapper struct{}
 
@@ -33,6 +28,10 @@ func (w *boxPlatformInterfaceWrapper) ReadWIFIState() adapter.WIFIState {
 		SSID:  state[0],
 		BSSID: state[1],
 	}
+}
+
+func (w *boxPlatformInterfaceWrapper) RequestPermissionForWIFIState() error {
+	return nil
 }
 
 func (w *boxPlatformInterfaceWrapper) Initialize(n adapter.NetworkManager) error {
@@ -53,7 +52,11 @@ func (w *boxPlatformInterfaceWrapper) AutoDetectInterfaceControl(fd int) error {
 	return intfBox.AutoDetectInterfaceControl(int32(fd))
 }
 
-func (w *boxPlatformInterfaceWrapper) OpenTun(options *tun.Options, platformOptions option.TunPlatformOptions) (tun.Tun, error) {
+func (w *boxPlatformInterfaceWrapper) UsePlatformInterface() bool {
+	return true
+}
+
+func (w *boxPlatformInterfaceWrapper) OpenInterface(options *tun.Options, platformOptions option.TunPlatformOptions) (tun.Tun, error) {
 	if len(options.IncludeUID) > 0 || len(options.ExcludeUID) > 0 {
 		return nil, E.New("android: unsupported uid options")
 	}
@@ -76,10 +79,6 @@ func (w *boxPlatformInterfaceWrapper) OpenTun(options *tun.Options, platformOpti
 	return tun.New(*options)
 }
 
-func (w *boxPlatformInterfaceWrapper) CloseTun() error {
-	return nil
-}
-
 func (w *boxPlatformInterfaceWrapper) UsePlatformDefaultInterfaceMonitor() bool {
 	return true
 }
@@ -88,23 +87,35 @@ func (w *boxPlatformInterfaceWrapper) CreateDefaultInterfaceMonitor(l logger.Log
 	return &interfaceMonitorStub{}
 }
 
-func (w *boxPlatformInterfaceWrapper) UsePlatformInterfaceGetter() bool {
+func (w *boxPlatformInterfaceWrapper) UsePlatformNetworkInterfaces() bool {
 	return false
 }
 
-func (w *boxPlatformInterfaceWrapper) Interfaces() ([]adapter.NetworkInterface, error) {
-	return nil, errors.New("wtf")
+func (w *boxPlatformInterfaceWrapper) NetworkInterfaces() ([]adapter.NetworkInterface, error) {
+	return nil, E.New("not implemented")
 }
 
-func (w *boxPlatformInterfaceWrapper) IncludeAllNetworks() bool {
+func (w *boxPlatformInterfaceWrapper) NetworkExtensionIncludeAllNetworks() bool {
 	return false
 }
 
-func (w *boxPlatformInterfaceWrapper) SendNotification(notification *platform.Notification) error {
+func (w *boxPlatformInterfaceWrapper) UsePlatformWIFIMonitor() bool {
+	return false
+}
+
+func (w *boxPlatformInterfaceWrapper) UsePlatformNotification() bool {
+	return false
+}
+
+func (w *boxPlatformInterfaceWrapper) SendNotification(notification *adapter.Notification) error {
 	return nil
 }
 
 func (s *boxPlatformInterfaceWrapper) SystemCertificates() []string {
+	return nil
+}
+
+func (w *boxPlatformInterfaceWrapper) MyInterfaceAddress() []netip.Addr {
 	return nil
 }
 
@@ -117,33 +128,46 @@ func (w *boxPlatformInterfaceWrapper) UnderNetworkExtension() bool {
 func (w *boxPlatformInterfaceWrapper) ClearDNSCache() {
 }
 
-// process.Searcher
+// connection owner lookup
 
-func (w *boxPlatformInterfaceWrapper) FindProcessInfo(ctx context.Context, network string, source netip.AddrPort, destination netip.AddrPort) (*process.Info, error) {
+func (w *boxPlatformInterfaceWrapper) UsePlatformConnectionOwnerFinder() bool {
+	return true
+}
+
+func (w *boxPlatformInterfaceWrapper) FindConnectionOwner(request *adapter.FindConnectionOwnerRequest) (*adapter.ConnectionOwner, error) {
 	var uid int32
 	if useProcfs {
-		uid = procfs.ResolveSocketByProcSearch(network, source, destination)
+		var network string
+		switch request.IpProtocol {
+		case syscall.IPPROTO_TCP:
+			network = "tcp"
+		case syscall.IPPROTO_UDP:
+			network = "udp"
+		default:
+			return nil, E.New("unknown ip protocol: ", request.IpProtocol)
+		}
+		sourceAddr, err := netip.ParseAddr(request.SourceAddress)
+		if err != nil {
+			return nil, E.Cause(err, "parse source address")
+		}
+		source := netip.AddrPortFrom(sourceAddr, uint16(request.SourcePort))
+		uid = procfs.ResolveSocketByProcSearch(network, source, netip.AddrPort{})
 		if uid == -1 {
 			return nil, E.New("procfs: not found")
 		}
 	} else {
-		var ipProtocol int32
-		switch N.NetworkName(network) {
-		case N.NetworkTCP:
-			ipProtocol = syscall.IPPROTO_TCP
-		case N.NetworkUDP:
-			ipProtocol = syscall.IPPROTO_UDP
-		default:
-			return nil, E.New("unknown network: ", network)
-		}
 		var err error
-		uid, err = intfBox.FindConnectionOwner(ipProtocol, source.Addr().String(), int32(source.Port()), destination.Addr().String(), int32(destination.Port()))
+		uid, err = intfBox.FindConnectionOwner(request.IpProtocol, request.SourceAddress, request.SourcePort, request.DestinationAddress, request.DestinationPort)
 		if err != nil {
 			return nil, err
 		}
 	}
 	packageName, _ := intfBox.PackageNameByUid(uid)
-	return &process.Info{UserId: uid, PackageName: packageName}, nil
+	var packageNames []string
+	if packageName != "" {
+		packageNames = []string{packageName}
+	}
+	return &adapter.ConnectionOwner{UserId: uid, AndroidPackageNames: packageNames}, nil
 }
 
 // io.Writer

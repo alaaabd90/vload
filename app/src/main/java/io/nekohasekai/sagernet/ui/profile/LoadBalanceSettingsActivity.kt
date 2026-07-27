@@ -5,10 +5,12 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
-import android.widget.SeekBar
+import android.widget.EditText
 import android.widget.Spinner
 import android.widget.TextView
 import androidx.activity.result.component1
@@ -66,8 +68,7 @@ class LoadBalanceSettingsActivity :
         val simSpinner = root.findViewById<Spinner>(R.id.sim_spinner)!!
         val profileName = root.findViewById<TextView>(R.id.profile_name)!!
         val chooseProfileButton = root.findViewById<View>(R.id.choose_profile_button)!!
-        val weightLabel = root.findViewById<TextView>(R.id.weight_label)!!
-        val weightSeekBar = root.findViewById<SeekBar>(R.id.weight_seekbar)!!
+        val weightEditText = root.findViewById<EditText>(R.id.weight_edit_text)!!
 
         init {
             root.findViewById<TextView>(R.id.slot_title).setText(titleRes)
@@ -76,7 +77,6 @@ class LoadBalanceSettingsActivity :
                 android.R.layout.simple_spinner_dropdown_item,
                 listOf(getString(R.string.load_balance_wifi), getString(R.string.load_balance_sim))
             )
-            weightSeekBar.max = 1000
         }
 
         fun sims(): List<SimSlotInfo> = SimSlots.listActiveSims()
@@ -163,8 +163,7 @@ class LoadBalanceSettingsActivity :
         slot.networkKindSpinner.setSelection(networkKind)
         slot.refreshSimAdapter(subscriptionId)
         slot.updateNetworkKindVisibility()
-        slot.weightSeekBar.progress = weight
-        slot.weightLabel.text = "${getString(R.string.load_balance_weight)}: $weight"
+        slot.weightEditText.setText(weight.toString())
 
         if (proxyId > 0) {
             runOnDefaultDispatcher {
@@ -206,19 +205,14 @@ class LoadBalanceSettingsActivity :
             selectProfileForSlot.launch(Intent(this, ProfileSelectActivity::class.java))
         }
 
-        slot.weightSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val value = progress.coerceAtLeast(1)
-                slot.weightLabel.text = "${getString(R.string.load_balance_weight)}: $value"
-                if (fromUser) {
-                    if (slotIndex == 0) DataStore.lbSlotAWeight = value else DataStore.lbSlotBWeight =
-                        value
-                    DataStore.dirty = true
-                }
+        slot.weightEditText.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                val value = s?.toString()?.toIntOrNull()?.coerceAtLeast(1) ?: return
+                if (slotIndex == 0) DataStore.lbSlotAWeight = value else DataStore.lbSlotBWeight = value
+                DataStore.dirty = true
             }
-
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
     }
 

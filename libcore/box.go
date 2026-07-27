@@ -16,11 +16,9 @@ import (
 	"github.com/matsuridayo/libneko/speedtest"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/boxapi"
-	"github.com/sagernet/sing-box/experimental/libbox/platform"
 	"github.com/sagernet/sing-box/protocol/group"
 
 	box "github.com/sagernet/sing-box"
-	"github.com/sagernet/sing-box/common/conntrack"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -60,7 +58,11 @@ func VersionBox() string {
 
 func ResetAllConnections(system bool) {
 	if system {
-		conntrack.Close()
+		if mainInstance != nil {
+			if cm := service.FromContext[adapter.ConnectionManager](mainInstance.ctx); cm != nil {
+				cm.CloseAll()
+			}
+		}
 		log.Println("Reset system connections done")
 	} else {
 		log.Println("TODO: Reset user connections")
@@ -71,6 +73,7 @@ type BoxInstance struct {
 	access sync.Mutex
 
 	*box.Box
+	ctx    context.Context
 	cancel context.CancelFunc
 	state  int
 
@@ -90,7 +93,7 @@ func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *Box
 		nekoboxAndroidDNSTransportRegistry(localTransport), nekoboxAndroidServiceRegistry(),
 	)
 	ctx = service.ContextWithDefaultRegistry(ctx)
-	service.MustRegister[platform.Interface](ctx, boxPlatformInterfaceInstance)
+	service.MustRegister[adapter.PlatformInterface](ctx, boxPlatformInterfaceInstance)
 
 	// parse options
 	var options option.Options
@@ -112,6 +115,7 @@ func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *Box
 
 	b = &BoxInstance{
 		Box:          instance,
+		ctx:          ctx,
 		cancel:       cancel,
 		pauseManager: service.FromContext[pause.Manager](ctx),
 	}
