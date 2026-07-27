@@ -145,7 +145,6 @@ fun buildConfig(
     val enableDnsRouting = DataStore.enableDnsRouting
     val useFakeDns = DataStore.enableFakeDns && !forTest
     val needSniff = DataStore.trafficSniffing > 0
-    val needSniffOverride = DataStore.trafficSniffing == 2
     val externalIndexMap = ArrayList<IndexEntity>()
     val ipv6Mode = if (forTest) IPv6Mode.ENABLE else DataStore.ipv6Mode
 
@@ -210,22 +209,17 @@ fun buildConfig(
                 }
                 endpoint_independent_nat = true
                 mtu = DataStore.mtu
-                domain_strategy = genDomainStrategy(DataStore.resolveDestination)
-                sniff = needSniff
-                sniff_override_destination = needSniffOverride
-                when (ipv6Mode) {
-                    IPv6Mode.DISABLE -> {
-                        inet4_address = listOf(VpnService.PRIVATE_VLAN4_CLIENT + "/28")
-                    }
-
-                    IPv6Mode.ONLY -> {
-                        inet6_address = listOf(VpnService.PRIVATE_VLAN6_CLIENT + "/126")
-                    }
-
-                    else -> {
-                        inet4_address = listOf(VpnService.PRIVATE_VLAN4_CLIENT + "/28")
-                        inet6_address = listOf(VpnService.PRIVATE_VLAN6_CLIENT + "/126")
-                    }
+                // "inet4_address"/"inet6_address" are legacy tun address
+                // fields, deprecated in sing-box 1.10.0 and removed in
+                // sing-box 1.12.0 - replaced by a single unified "address"
+                // list mixing v4/v6 prefixes.
+                _hack_config_map["address"] = when (ipv6Mode) {
+                    IPv6Mode.DISABLE -> listOf(VpnService.PRIVATE_VLAN4_CLIENT + "/28")
+                    IPv6Mode.ONLY -> listOf(VpnService.PRIVATE_VLAN6_CLIENT + "/126")
+                    else -> listOf(
+                        VpnService.PRIVATE_VLAN4_CLIENT + "/28",
+                        VpnService.PRIVATE_VLAN6_CLIENT + "/126",
+                    )
                 }
             })
             inbounds.add(Inbound_MixedOptions().apply {
@@ -233,9 +227,6 @@ fun buildConfig(
                 tag = TAG_MIXED
                 listen = bind
                 listen_port = DataStore.mixedPort
-                domain_strategy = genDomainStrategy(DataStore.resolveDestination)
-                sniff = needSniff
-                sniff_override_destination = needSniffOverride
             })
         }
 
@@ -733,6 +724,27 @@ fun buildConfig(
         if (forTest) {
             dns.rules = listOf()
         } else {
+            // migrated from legacy per-inbound sniff/domain_strategy fields
+            // (removed in sing-box 1.13.0) to rule actions - see
+            // https://sing-box.sagernet.org/migration/#migrate-legacy-inbound-fields-to-rule-actions
+            val sniffInboundTags = buildList {
+                if (isVPN) add("tun-in")
+                add(TAG_MIXED)
+            }
+            val domainStrategy = genDomainStrategy(DataStore.resolveDestination)
+            if (domainStrategy.isNotEmpty()) {
+                route.rules.add(0, Rule_DefaultOptions().apply {
+                    inbound = sniffInboundTags
+                    action = "resolve"
+                    _hack_config_map["strategy"] = domainStrategy
+                })
+            }
+            if (needSniff) {
+                route.rules.add(0, Rule_DefaultOptions().apply {
+                    inbound = sniffInboundTags
+                    action = "sniff"
+                })
+            }
             // built-in DNS rules
             route.rules.add(0, Rule_DefaultOptions().apply {
                 protocol = listOf("dns")
