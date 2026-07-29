@@ -52,6 +52,11 @@
             app:key="packetEncoding"
             app:title="@string/packet_encoding"
             app:useSimpleSummaryProvider="true" />
+        <SwitchPreference
+            app:icon="@drawable/ic_baseline_speed_24"
+            app:key="tcpFastOpen"
+            app:summary="@string/tcp_fast_open_sum"
+            app:title="@string/tcp_fast_open" />
         <moe.matsuri.nb4a.ui.SimpleMenuPreference
             app:entries="@array/networks_value"
             app:entryValues="@array/networks_value"

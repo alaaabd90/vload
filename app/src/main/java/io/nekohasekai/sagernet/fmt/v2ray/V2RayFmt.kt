@@ -633,6 +633,7 @@ fun buildSingBoxOutboundStandardV2RayBean(bean: StandardV2RayBean): Outbound {
                 username = bean.username
                 password = bean.password
                 tls = buildSingBoxOutboundTLS(bean)
+                tcp_fast_open = bean.tcpFastOpen
             }
         }
 
@@ -652,6 +653,7 @@ fun buildSingBoxOutboundStandardV2RayBean(bean: StandardV2RayBean): Outbound {
                 }
                 tls = buildSingBoxOutboundTLS(bean)
                 transport = buildSingBoxOutboundStreamSettings(bean)
+                tcp_fast_open = bean.tcpFastOpen
             }
             return Outbound_VMessOptions().apply {
                 type = "vmess"
@@ -667,6 +669,7 @@ fun buildSingBoxOutboundStandardV2RayBean(bean: StandardV2RayBean): Outbound {
                 }
                 tls = buildSingBoxOutboundTLS(bean)
                 transport = buildSingBoxOutboundStreamSettings(bean)
+                tcp_fast_open = bean.tcpFastOpen
             }
         }
 
@@ -678,6 +681,7 @@ fun buildSingBoxOutboundStandardV2RayBean(bean: StandardV2RayBean): Outbound {
                 password = bean.password
                 tls = buildSingBoxOutboundTLS(bean)
                 transport = buildSingBoxOutboundStreamSettings(bean)
+                tcp_fast_open = bean.tcpFastOpen
             }
         }
 

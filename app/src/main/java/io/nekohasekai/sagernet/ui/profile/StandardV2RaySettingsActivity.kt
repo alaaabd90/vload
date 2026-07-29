@@ -33,6 +33,7 @@ abstract class StandardV2RaySettingsActivity : ProfileSettingsActivity<StandardV
     private val host = pbm.add(PreferenceBinding(Type.Text, "host"))
     private val path = pbm.add(PreferenceBinding(Type.Text, "path"))
     private val packetEncoding = pbm.add(PreferenceBinding(Type.TextToInt, "packetEncoding"))
+    private val tcpFastOpen = pbm.add(PreferenceBinding(Type.Bool, "tcpFastOpen"))
     private val wsMaxEarlyData = pbm.add(PreferenceBinding(Type.TextToInt, "wsMaxEarlyData"))
     private val earlyDataHeaderName = pbm.add(PreferenceBinding(Type.Text, "earlyDataHeaderName"))
     private val security = pbm.add(PreferenceBinding(Type.Text, "security"))

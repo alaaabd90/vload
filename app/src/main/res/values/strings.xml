@@ -170,6 +170,10 @@
     <string name="mux_sum">Mux is designed to reduce TCP handshake latency, not to increase
         connection throughput. Using Mux to watch videos, download or speed test is usually counter
         productive. If the server does not support it, you will not be able to access the Internet.</string>
+    <string name="tcp_fast_open">TCP Fast Open</string>
+    <string name="tcp_fast_open_sum">Saves one round-trip on new connections to a server you\'ve
+        already connected to. The server must also have TCP Fast Open enabled, otherwise this has
+        no effect.</string>
     <string name="mux_concurrency">Mux Concurrent Connections</string>
     <string name="tcp_keep_alive_interval">TCP keep active packet delivery interval</string>
     <string name="proxied_apps">Apps VPN mode</string>

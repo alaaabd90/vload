@@ -61,6 +61,9 @@ public abstract class StandardV2RayBean extends AbstractBean {
     public Integer muxType;
     public Integer muxConcurrency;
 
+    // --------------------------------------- //
+
+    public Boolean tcpFastOpen;
 
     // --------------------------------------- //
 
@@ -108,11 +111,13 @@ public abstract class StandardV2RayBean extends AbstractBean {
         if (muxPadding == null) muxPadding = false;
         if (muxType == null) muxType = 0;
         if (muxConcurrency == null) muxConcurrency = 1;
+
+        if (tcpFastOpen == null) tcpFastOpen = false;
     }
 
     @Override
     public void serialize(ByteBufferOutput output) {
-        output.writeInt(4);
+        output.writeInt(5);
         super.serialize(output);
         output.writeString(uuid);
         output.writeString(encryption);
@@ -165,6 +170,8 @@ public abstract class StandardV2RayBean extends AbstractBean {
         output.writeBoolean(muxPadding);
         output.writeInt(muxType);
         output.writeInt(muxConcurrency);
+
+        output.writeBoolean(tcpFastOpen);
     }
 
     @Override
@@ -255,6 +262,10 @@ public abstract class StandardV2RayBean extends AbstractBean {
             muxPadding = input.readBoolean();
             muxType = input.readInt();
             muxConcurrency = input.readInt();
+        }
+
+        if (version >= 5) {
+            tcpFastOpen = input.readBoolean();
         }
     }
 
