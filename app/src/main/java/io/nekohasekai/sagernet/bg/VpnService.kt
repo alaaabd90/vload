@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Network
 import android.net.ProxyInfo
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -40,6 +41,7 @@ class VpnService : BaseVpnService(),
     private var metered = false
 
     override var upstreamInterfaceName: String? = null
+    override var upstreamNetwork: Network? = null
 
     // vload dual-network load balancing: non-null only while a
     // TYPE_LOAD_BALANCE profile is the running session.

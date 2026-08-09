@@ -4,6 +4,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Network
 import android.os.*
 import android.widget.Toast
 import io.nekohasekai.sagernet.Action
@@ -275,6 +276,7 @@ class BaseService {
 
         // networks
         var upstreamInterfaceName: String?
+        var upstreamNetwork: Network?
 
         suspend fun preInit() {
             DefaultNetworkListener.start(this) {
@@ -283,10 +285,20 @@ class BaseService {
                     DataStore.vpnService?.updateUnderlyingNetwork()
                     //
                     val oldName = upstreamInterfaceName
-                    if (oldName != link.interfaceName) {
-                        upstreamInterfaceName = link.interfaceName
-                    }
-                    if (oldName != null && upstreamInterfaceName != null && oldName != upstreamInterfaceName) {
+                    val oldNetwork = upstreamNetwork
+                    upstreamInterfaceName = link.interfaceName
+                    upstreamNetwork = it
+                    // A cell-tower handoff (e.g. driving) usually keeps the same
+                    // radio interface name -- still "rmnet0" -- even though
+                    // Android hands out a brand-new Network underneath.
+                    // Comparing interface names alone missed that case
+                    // entirely, leaving sing-box holding connections over a
+                    // network that had already gone dead until the user
+                    // manually reconnected. Network identity is what actually
+                    // changes on every real handover, same-interface or not
+                    // (mirrors how the v2rayNG fork's NetworkMonitor decides a
+                    // handover happened).
+                    if (oldNetwork != null && it != null && oldNetwork != it) {
                         Logs.d("Network changed: $oldName -> $upstreamInterfaceName")
                         if (DataStore.networkChangeResetConnections) {
                             Libcore.resetAllConnections(true)
