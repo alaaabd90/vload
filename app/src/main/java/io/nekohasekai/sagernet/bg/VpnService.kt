@@ -21,6 +21,7 @@ import io.nekohasekai.sagernet.ui.VpnRequestActivity
 import io.nekohasekai.sagernet.utils.NetworkSelector
 import io.nekohasekai.sagernet.utils.Subnet
 import io.nekohasekai.sagernet.utils.VloadNetworkController
+import libcore.Libcore
 import android.net.VpnService as BaseVpnService
 
 class VpnService : BaseVpnService(),
@@ -48,6 +49,13 @@ class VpnService : BaseVpnService(),
     var vloadNetworkController: VloadNetworkController? = null
         private set
 
+    // Last Network object seen per slot, so the controller callback (which
+    // now also fires on every onCapabilitiesChanged, not just onAvailable)
+    // can tell "this slot's network actually changed/was lost" apart from
+    // "the same network just refreshed its capabilities" before deciding
+    // whether a connection reset is warranted.
+    private val lastSlotNetwork = arrayOfNulls<Network>(2)
+
     override suspend fun startProcesses() {
         DataStore.vpnService = this
         setupVloadNetworksIfNeeded()
@@ -68,12 +76,37 @@ class VpnService : BaseVpnService(),
             NetworkSelector.WiFi
         }
 
+        lastSlotNetwork[0] = null
+        lastSlotNetwork[1] = null
         val controller = VloadNetworkController { slot, network ->
             val proxy = data.proxy
             val delivered = proxy?.takeIf { it.isInitialized() }
             Logs.i("vload: slot $slot network=${network?.toString() ?: "lost"} deliveredToBox=${delivered != null}")
             delivered?.box?.updateNetworkAvailability(slot, network != null)
             updateUnderlyingNetwork()
+
+            // updateNetworkAvailability above only affects which slot pick()
+            // is willing to choose for *new* connections; it does nothing
+            // about connections that were already open on this slot before
+            // its network changed underneath them. Without an explicit
+            // reset those just sit there broken until the user manually
+            // reconnects - the same failure mode the single-network path
+            // (BaseService.preInit) already guards against, but this
+            // dual-network slot tracker runs entirely separately from that
+            // and never called into it. Only reset on a genuine change (a
+            // different Network object, or the slot's network being lost),
+            // not on every capabilities refresh of the same still-current
+            // network, so a routine signal-strength update doesn't thrash
+            // every open connection on the *other*, unaffected slot too.
+            val previous = lastSlotNetwork.getOrNull(slot)
+            lastSlotNetwork[slot] = network
+            val isFirstAcquisition = previous == null && network != null
+            if (previous != network && !isFirstAcquisition && delivered != null) {
+                Logs.i("vload: slot $slot network changed ($previous -> $network), resetting connections")
+                if (DataStore.networkChangeResetConnections) {
+                    Libcore.resetAllConnections(true)
+                }
+            }
         }
         vloadNetworkController = controller
 

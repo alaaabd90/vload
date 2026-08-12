@@ -52,6 +52,20 @@ class VloadNetworkController(
                 mainHandler.post { onSlotChanged(slot, network) }
             }
 
+            // A cell-tower handoff doesn't always hand out a new Network for
+            // a narrowly-scoped per-transport/per-SIM request like this one
+            // the way it reliably does for a broad default-network request -
+            // the OS can preserve the same Network across it and only ever
+            // signal the change via updated capabilities. Routing this
+            // through onSlotChanged too, instead of only onAvailable, is the
+            // difference between catching that class of handoff and missing
+            // it outright; the caller is responsible for not treating every
+            // capabilities refresh on an already-known network as a reason
+            // to reset connections.
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                mainHandler.post { onSlotChanged(slot, network) }
+            }
+
             override fun onLost(network: Network) {
                 if (networks[slot] == network) {
                     networks[slot] = null
