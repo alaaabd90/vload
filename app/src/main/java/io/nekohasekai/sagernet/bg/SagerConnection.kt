@@ -7,7 +7,6 @@ import android.content.ServiceConnection
 import android.os.IBinder
 import android.os.RemoteException
 import io.nekohasekai.sagernet.Action
-import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
 import io.nekohasekai.sagernet.aidl.SpeedDisplayData
@@ -21,12 +20,12 @@ class SagerConnection(
 ) : ServiceConnection, IBinder.DeathRecipient {
 
     companion object {
+        // Proxy-only mode (no VPN interface) is retired -- VpnService::class
+        // unconditionally here, not just in the settings UI, so an install
+        // that still has "proxy" saved from before this change (or any other
+        // stored value) can't route to ProxyService either.
         val serviceClass
-            get() = when (DataStore.serviceMode) {
-                Key.MODE_PROXY -> ProxyService::class
-                Key.MODE_VPN -> VpnService::class
-                else -> throw UnknownError()
-            }.java
+            get() = VpnService::class.java
 
         const val CONNECTION_ID_SHORTCUT = 0
         const val CONNECTION_ID_TILE = 1

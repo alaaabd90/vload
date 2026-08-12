@@ -97,7 +97,12 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var isExpert by configurationStore.boolean(Key.APP_EXPERT)
     var appTheme by configurationStore.int(Key.APP_THEME)
     var nightTheme by configurationStore.stringToInt(Key.NIGHT_THEME)
-    var serviceMode by configurationStore.string(Key.SERVICE_MODE) { Key.MODE_VPN }
+    // Proxy-only mode is retired -- always VPN, regardless of any "proxy"
+    // value a pre-upgrade install still has saved in its preferences (the
+    // settings UI to pick it is gone, but the old stored value would
+    // otherwise persist across the app update and silently keep routing
+    // that install through the removed proxy path).
+    val serviceMode: String get() = Key.MODE_VPN
 
     var trafficSniffing by configurationStore.stringToInt(Key.TRAFFIC_SNIFFING) { 1 }
     var resolveDestination by configurationStore.boolean(Key.RESOLVE_DESTINATION)

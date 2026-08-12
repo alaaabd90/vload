@@ -110,7 +110,6 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         }
 
         val mixedPort = findPreference<EditTextPreference>(Key.MIXED_PORT)!!
-        val serviceMode = findPreference<Preference>(Key.SERVICE_MODE)!!
         val allowAccess = findPreference<Preference>(Key.ALLOW_ACCESS)!!
         val appendHttpProxy = findPreference<SwitchPreference>(Key.APPEND_HTTP_PROXY)!!
 
@@ -178,11 +177,6 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         speedInterval.setOnPreferenceChangeListener { _, newValue ->
             profileTrafficStatistics.isEnabled = newValue.toString() != "0"
             needReload()
-            true
-        }
-
-        serviceMode.setOnPreferenceChangeListener { _, _ ->
-            if (DataStore.serviceState.started) SagerNet.stopService()
             true
         }
 

@@ -20,14 +20,9 @@
             app:key="nightTheme"
             app:title="@string/night_mode"
             app:useSimpleSummaryProvider="true" />
-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
-            app:defaultValue="vpn"
-            app:entries="@array/service_modes"
-            app:entryValues="@array/service_mode_values"
-            app:icon="@drawable/ic_device_developer_mode"
-            app:key="serviceMode"
-            app:title="@string/service_mode"
-            app:useSimpleSummaryProvider="true" />
+        <!-- Proxy-only service mode retired: VPN is the only mode now
+             (see SagerConnection.serviceClass), so there's nothing left to
+             choose here. -->
         <moe.matsuri.nb4a.ui.SimpleMenuPreference
             app:defaultValue="0"
             app:entries="@array/tun_implementation"
