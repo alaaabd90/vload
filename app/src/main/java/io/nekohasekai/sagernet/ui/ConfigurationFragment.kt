@@ -1820,7 +1820,7 @@ class ConfigurationFragment @JvmOverloads constructor(
     fun promptExportLocked(entity: ProxyEntity) {
         val input = EditText(requireContext()).apply {
             hint = getString(R.string.export_locked_hwid_hint)
-            filters = arrayOf(android.text.InputFilter.LengthFilter(16))
+            filters = arrayOf(android.text.InputFilter.LengthFilter(LockedProfileCrypto.HWID_BYTES))
         }
         MaterialAlertDialogBuilder(requireContext())
             .setTitle(R.string.action_export_locked)
@@ -1828,7 +1828,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             .setView(input)
             .setPositiveButton(android.R.string.ok) { _, _ ->
                 val targetHwid = input.text.toString().trim().uppercase()
-                if (targetHwid.length != 16 || !targetHwid.all { it.isDigit() || it in 'A'..'F' }) {
+                if (targetHwid.length != LockedProfileCrypto.HWID_BYTES || !targetHwid.all { it.isDigit() || it in 'A'..'F' }) {
                     snackbar(getString(R.string.export_locked_invalid_hwid)).show()
                     return@setPositiveButton
                 }

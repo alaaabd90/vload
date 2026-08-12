@@ -239,8 +239,8 @@
     <string name="load_balance_weight">Speed weight</string>
     <string name="action_export_locked">Export locked to device…</string>
     <string name="export_locked_message">Enter the target device\'s HWID (Settings → Device HWID). The exported file will only import on that device.</string>
-    <string name="export_locked_hwid_hint">e.g. A1B2C3D4E5F60718</string>
-    <string name="export_locked_invalid_hwid">Enter a valid 16-character HWID</string>
+    <string name="export_locked_hwid_hint">e.g. 1C3B71B27C060501786884BCCF3BA05B</string>
+    <string name="export_locked_invalid_hwid">Enter a valid 32-character HWID</string>
     <string name="device_hwid">Device HWID</string>
     <string name="device_hwid_sum">Give this to whoever is locking a profile for you. Tap to copy.</string>
     <string name="locked_profile_wrong_device">This profile is locked to device %1$s, not this device</string>
