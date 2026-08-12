@@ -5,12 +5,9 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.text.Editable
-import android.text.TextWatcher
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
-import android.widget.EditText
 import android.widget.Spinner
 import android.widget.TextView
 import androidx.activity.result.component1
@@ -68,7 +65,6 @@ class LoadBalanceSettingsActivity :
         val simSpinner = root.findViewById<Spinner>(R.id.sim_spinner)!!
         val profileName = root.findViewById<TextView>(R.id.profile_name)!!
         val chooseProfileButton = root.findViewById<View>(R.id.choose_profile_button)!!
-        val weightEditText = root.findViewById<EditText>(R.id.weight_edit_text)!!
 
         init {
             root.findViewById<TextView>(R.id.slot_title).setText(titleRes)
@@ -144,11 +140,11 @@ class LoadBalanceSettingsActivity :
 
         bindSlot(
             slotA, DataStore.lbSlotANetworkKind, DataStore.lbSlotASubscriptionId,
-            DataStore.lbSlotAProxyId, DataStore.lbSlotAWeight, slotIndex = 0
+            DataStore.lbSlotAProxyId, slotIndex = 0
         )
         bindSlot(
             slotB, DataStore.lbSlotBNetworkKind, DataStore.lbSlotBSubscriptionId,
-            DataStore.lbSlotBProxyId, DataStore.lbSlotBWeight, slotIndex = 1
+            DataStore.lbSlotBProxyId, slotIndex = 1
         )
     }
 
@@ -157,13 +153,11 @@ class LoadBalanceSettingsActivity :
         networkKind: Int,
         subscriptionId: Int,
         proxyId: Long,
-        weight: Int,
         slotIndex: Int,
     ) {
         slot.networkKindSpinner.setSelection(networkKind)
         slot.refreshSimAdapter(subscriptionId)
         slot.updateNetworkKindVisibility()
-        slot.weightEditText.setText(weight.toString())
 
         if (proxyId > 0) {
             runOnDefaultDispatcher {
@@ -204,16 +198,6 @@ class LoadBalanceSettingsActivity :
             chosenSlot = slotIndex
             selectProfileForSlot.launch(Intent(this, ProfileSelectActivity::class.java))
         }
-
-        slot.weightEditText.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                val value = s?.toString()?.toIntOrNull()?.coerceAtLeast(1) ?: return
-                if (slotIndex == 0) DataStore.lbSlotAWeight = value else DataStore.lbSlotBWeight = value
-                DataStore.dirty = true
-            }
-        })
     }
 
     private object ContextCompatPermission {
