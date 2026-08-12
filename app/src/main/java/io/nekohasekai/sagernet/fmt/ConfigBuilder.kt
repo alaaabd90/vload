@@ -46,6 +46,12 @@ const val TAG_DIRECT = "direct"
 const val TAG_BYPASS = "bypass"
 const val TAG_BLOCK = "block"
 
+// vload: Load Balance's DNS-only outbound - same two slots as TAG_PROXY, but
+// mode="priority" so DNS answers come from one consistent network (failing
+// over, not hedging/splitting) while bulk traffic through TAG_PROXY still
+// combines both. See buildLoadBalance and the dns-remote server below.
+const val TAG_DNS_PROXY = "dns-proxy"
+
 const val LOCALHOST = "127.0.0.1"
 
 class ConfigBuildResult(
@@ -494,6 +500,19 @@ fun buildConfig(
                     },
                 )
             })
+
+            // Same two slots, but DNS wants a single consistent source with
+            // failover, not both networks' answers mixed per query - see
+            // TAG_DNS_PROXY.
+            outbounds.add(0, Outbound_WeightedOptions().apply {
+                type = "weighted"
+                tag = TAG_DNS_PROXY
+                mode = "priority"
+                outbounds = listOf(
+                    WeightedOutboundMember().apply { outbound = slotATag },
+                    WeightedOutboundMember().apply { outbound = slotBTag },
+                )
+            })
         }
 
         // build outbounds
@@ -709,6 +728,17 @@ fun buildConfig(
                 tag = "dns-remote"
                 address_resolver = "dns-direct"
                 strategy = autoDnsDomainStrategy(SingBoxOptionsUtil.domainStrategy(tag))
+                // Without this, dns-remote falls to the router's default
+                // outbound (TAG_PROXY), which combines both networks per
+                // query - fine for bulk throughput, but two networks can
+                // give different answers (split-horizon DNS, different
+                // upstream results), so bouncing between them per-lookup
+                // undermines stable browsing. Pin DNS to the priority-mode
+                // outbound instead: one consistent network, failing over
+                // rather than splitting.
+                if (proxy.type == ProxyEntity.TYPE_LOAD_BALANCE) {
+                    detour = TAG_DNS_PROXY
+                }
             })
         }
 

@@ -4393,6 +4393,12 @@ public class SingBoxOptions {
 
         public List<WeightedOutboundMember> outbounds;
 
+        // "" / "adaptive" (default, omit): combined-throughput mode, hedges
+        // across both members. "priority": always prefers the first member,
+        // fails over to later ones only on an actual failure, never hedges -
+        // see protocol/group/weighted.go's WeightedOutboundOptions doc.
+        public String mode;
+
     }
 
     public static class Rule_DefaultOptions extends Rule {
