@@ -513,6 +513,16 @@ fun buildConfig(
                     WeightedOutboundMember().apply { outbound = slotBTag },
                 )
             })
+
+            // route.final was never set, so sing-box defaulted it to the
+            // first outbound in the list - and since TAG_DNS_PROXY gets
+            // inserted at index 0 *after* TAG_PROXY (both use add(0, ...)),
+            // TAG_DNS_PROXY ended up as the accidental default for ALL
+            // unmatched traffic, not just DNS. Its priority mode always
+            // prefers slot A and only touches slot B on failure, which is
+            // why virtually all real traffic was pinned to slot A and the
+            // real adaptive TAG_PROXY group's picker was never even invoked.
+            route.final_ = TAG_PROXY
         }
 
         // build outbounds

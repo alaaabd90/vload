@@ -329,7 +329,15 @@ data class ProxyEntity(
             TYPE_VMESS -> MultiplexOptions().apply {
                 enabled = vmessBean!!.enableMux
                 padding = vmessBean!!.muxPadding
-                max_streams = vmessBean!!.muxConcurrency
+                // max_connections/min_streams (not max_streams) puts sing-box's
+                // mux in multi-connection mode: muxConcurrency real TCP
+                // connections shared across streams, instead of every stream
+                // funneled through one socket - the single-connection mode
+                // is what made high-parallelism traffic (torrent) bottleneck
+                // and made a network handover on this connection take every
+                // multiplexed stream down with it at once.
+                max_connections = vmessBean!!.muxConcurrency
+                min_streams = 4
                 protocol = when (vmessBean!!.muxType) {
                     1 -> "smux"
                     2 -> "yamux"
@@ -340,7 +348,8 @@ data class ProxyEntity(
             TYPE_TROJAN -> MultiplexOptions().apply {
                 enabled = trojanBean!!.enableMux
                 padding = trojanBean!!.muxPadding
-                max_streams = trojanBean!!.muxConcurrency
+                max_connections = trojanBean!!.muxConcurrency
+                min_streams = 4
                 protocol = when (trojanBean!!.muxType) {
                     1 -> "smux"
                     2 -> "yamux"

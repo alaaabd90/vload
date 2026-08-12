@@ -300,21 +300,36 @@ class VpnService : BaseVpnService(),
         return conn!!.fd
     }
 
+    // DefaultNetworkListener fires on every capabilities refresh of the
+    // system default network, not just real changes - and under Load
+    // Balance it fires far more often than usual, since holding two extra
+    // concurrent per-transport NetworkRequests (VloadNetworkController)
+    // makes Android's connectivity service churn capability callbacks more
+    // aggressively system-wide. Every one of those calls updateUnderlyingNetwork,
+    // and calling setUnderlyingNetworks unconditionally each time - even
+    // with an identical network set - makes sing-box's core treat it as a
+    // real interface change and reset every outbound's mux dialer
+    // (InterfaceUpdated -> multiplexDialer.Reset()), killing every open
+    // multiplexed stream at once. That's what was silently torching Load
+    // Balance sessions every ~30s: not a real network change, just this
+    // redundant re-apply. Only call through to setUnderlyingNetworks when
+    // the target set has actually changed from what's already applied.
+    private var lastUnderlyingNetworks: List<Network>? = null
+
     fun updateUnderlyingNetwork(builder: Builder? = null) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
             val vload = vloadNetworkController
             val vloadNetworks = vload?.let {
                 listOfNotNull(it.networkFor(0), it.networkFor(1))
             } ?: emptyList()
-            if (vloadNetworks.isNotEmpty()) {
-                val networks = vloadNetworks.toTypedArray()
-                builder?.setUnderlyingNetworks(networks) ?: setUnderlyingNetworks(networks)
-                return
+            val targetNetworks = vloadNetworks.ifEmpty {
+                listOfNotNull(SagerNet.underlyingNetwork)
             }
-            SagerNet.underlyingNetwork?.let {
-                builder?.setUnderlyingNetworks(arrayOf(SagerNet.underlyingNetwork))
-                    ?: setUnderlyingNetworks(arrayOf(SagerNet.underlyingNetwork))
-            }
+            if (targetNetworks.isEmpty()) return
+            if (builder == null && targetNetworks == lastUnderlyingNetworks) return
+            lastUnderlyingNetworks = targetNetworks
+            val networks = targetNetworks.toTypedArray()
+            builder?.setUnderlyingNetworks(networks) ?: setUnderlyingNetworks(networks)
         }
     }
 
