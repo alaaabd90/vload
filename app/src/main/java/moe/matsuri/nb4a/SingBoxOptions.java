@@ -1894,6 +1894,10 @@ public class SingBoxOptions {
 
         public OutboundRealityOptions reality;
 
+        public Boolean fragment;
+
+        public Boolean record_fragment;
+
     }
 
     public static class InboundRealityOptions extends SingBoxOption {

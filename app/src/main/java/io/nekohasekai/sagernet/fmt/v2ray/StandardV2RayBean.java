@@ -33,6 +33,8 @@ public abstract class StandardV2RayBean extends AbstractBean {
 
     public Boolean allowInsecure;
 
+    public Boolean sniFragment;
+
     // --------------------------------------- reality
 
 
@@ -99,6 +101,7 @@ public abstract class StandardV2RayBean extends AbstractBean {
 
         if (wsMaxEarlyData == null) wsMaxEarlyData = 0;
         if (allowInsecure == null) allowInsecure = false;
+        if (sniFragment == null) sniFragment = false;
         if (packetEncoding == null) packetEncoding = 0;
 
         if (realityPubKey == null) realityPubKey = "";
@@ -117,7 +120,7 @@ public abstract class StandardV2RayBean extends AbstractBean {
 
     @Override
     public void serialize(ByteBufferOutput output) {
-        output.writeInt(5);
+        output.writeInt(6);
         super.serialize(output);
         output.writeString(uuid);
         output.writeString(encryption);
@@ -172,6 +175,8 @@ public abstract class StandardV2RayBean extends AbstractBean {
         output.writeInt(muxConcurrency);
 
         output.writeBoolean(tcpFastOpen);
+
+        output.writeBoolean(sniFragment);
     }
 
     @Override
@@ -266,6 +271,10 @@ public abstract class StandardV2RayBean extends AbstractBean {
 
         if (version >= 5) {
             tcpFastOpen = input.readBoolean();
+        }
+
+        if (version >= 6) {
+            sniFragment = input.readBoolean();
         }
     }
 

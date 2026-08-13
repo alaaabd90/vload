@@ -620,6 +620,13 @@ fun buildSingBoxOutboundTLS(bean: StandardV2RayBean): OutboundTLSOptions? {
                 }
             }
         }
+        if (bean.sniFragment) {
+            // record_fragment must be set for sing-box to apply fragmentation at
+            // all - it only wraps the conn with tf.NewConn when record_fragment is
+            // true (see common/tls/std_client.go), fragment alone has no effect.
+            fragment = true
+            record_fragment = true
+        }
     }
 }
 

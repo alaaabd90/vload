@@ -123,6 +123,11 @@
             app:key="allowInsecure"
             app:summary="@string/allow_insecure_sum"
             app:title="@string/allow_insecure" />
+        <SwitchPreference
+            app:icon="@drawable/ic_notification_enhanced_encryption"
+            app:key="sniFragment"
+            app:summary="@string/sni_fragment_sum"
+            app:title="@string/sni_fragment" />
     </PreferenceCategory>
 
     <PreferenceCategory
