@@ -214,9 +214,9 @@ class BaseService {
 
         suspend fun startProcesses() {
             data.proxy!!.launch()
-            // shareVpnLocalNetwork now just widens the mixed inbound's own
-            // bind address (see ConfigBuilder.kt) - no separate relay to
-            // start here.
+            if (DataStore.shareVpnLocalNetwork) {
+                LocalShareServer.startShared(DataStore.mixedPort)
+            }
         }
 
         fun startRunner() {
@@ -227,6 +227,7 @@ class BaseService {
 
         fun killProcesses() {
             data.proxy?.close()
+            LocalShareServer.stopShared()
             wakeLock?.apply {
                 release()
                 wakeLock = null
