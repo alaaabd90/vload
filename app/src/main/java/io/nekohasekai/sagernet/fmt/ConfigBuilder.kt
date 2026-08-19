@@ -172,6 +172,23 @@ fun buildConfig(
             }
         }
 
+        // Without this, sing-box's fakeip reverse-mapping store is a small
+        // in-memory-only map: a burst of connections (many subdomains at
+        // once, or several LAN clients sharing this phone's VPN at the same
+        // time) can evict a domain's fake-IP mapping before that connection
+        // finishes dialing, which is a FATAL error in sing-box's router
+        // (route.go: "missing fakeip record, try enable
+        // `experimental.cache_file`") surfaced to the client as a
+        // refused/failed connection that a reload then fixes. Same fix
+        // already applied on the Windows side (db/ConfigBuilder.cpp).
+        if (!forTest && useFakeDns) {
+            if (experimental == null) experimental = ExperimentalOptions()
+            experimental?.cache_file = CacheFile().apply {
+                enabled = true
+                store_fakeip = true
+            }
+        }
+
         log = LogOptions().apply {
             level = when (DataStore.logLevel) {
                 0 -> "panic"
