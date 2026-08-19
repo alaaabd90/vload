@@ -143,7 +143,15 @@ fun buildConfig(
     val domainListDNSDirectForce = mutableListOf<String>()
     val bypassDNSBeans = hashSetOf<AbstractBean>()
     val isVPN = DataStore.serviceMode == Key.MODE_VPN
-    val bind = if (!forTest && DataStore.allowAccess) "0.0.0.0" else LOCALHOST
+    // "Share VPN over local network" used to run its own hand-written TCP
+    // relay (LocalShareServer) in front of this same inbound, with a
+    // hardcoded 20-connection cap - any connection-heavy page (e.g. one
+    // opening dozens of subdomains at once) would silently get some
+    // connections refused past that cap, from ANY client's perspective.
+    // Bind the real mixed inbound straight to 0.0.0.0 instead, same as
+    // Hiddify does for its equivalent LAN-sharing toggle - no extra hop,
+    // no artificial limit, sing-box's own listener handles it directly.
+    val bind = if (!forTest && (DataStore.allowAccess || DataStore.shareVpnLocalNetwork)) "0.0.0.0" else LOCALHOST
     val remoteDns = DataStore.remoteDns.split("\n")
         .mapNotNull { dns -> dns.trim().takeIf { it.isNotBlank() && !it.startsWith("#") } }
     val directDNS = DataStore.directDns.split("\n")

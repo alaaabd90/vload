@@ -89,10 +89,10 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
                 // the other device is connected to this phone, not something
                 // that can be guessed - QR-encode just the first one.
                 val text = addresses.joinToString("\n") { (label, ip) ->
-                    "$ip:${LocalShareServer.LISTEN_PORT} ($label)"
+                    "$ip:${DataStore.mixedPort} ($label)"
                 }
                 val primary = addresses.first().second
-                QRCodeDialog("socks://$primary:${LocalShareServer.LISTEN_PORT}", text).showAllowingStateLoss(
+                QRCodeDialog("socks://$primary:${DataStore.mixedPort}", text).showAllowingStateLoss(
                     parentFragmentManager
                 )
             } else {
