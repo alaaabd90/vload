@@ -20,15 +20,7 @@ object SingBoxOptionsUtil {
 
             // server
             else -> {
-                // prefer_ipv4 still lets an IPv6 destination through when a
-                // domain has both A/AAAA records - and sing's address
-                // serializer (common/metadata/serializer.go) throws
-                // "unsupported address" for IPv6 on some outbound/relay
-                // paths (confirmed live: intermittent ERR_CONNECTION_REFUSED
-                // on dual-stack domains like clients4.google.com under Load
-                // Balance's weighted outbound). ipv4_only removes IPv6 from
-                // consideration entirely instead of merely preferring IPv4.
-                auto2("domain_strategy_for_server", "ipv4_only")
+                auto2("domain_strategy_for_server", "prefer_ipv4")
             }
         }
     }
