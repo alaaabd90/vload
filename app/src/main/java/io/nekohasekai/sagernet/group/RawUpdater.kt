@@ -346,10 +346,27 @@ object RawUpdater : GroupUpdater() {
                                     }
 
                                     "packet-encoding" -> if (bean is VMessBean) {
+                                        // Any other value (including "none", or a
+                                        // non-string/absent one) must NOT fall through to
+                                        // 0 - that's the same broken "empty" packet
+                                        // encoding mode StandardV2RayBean and the
+                                        // migratePacketEncodingDefaults migration exist to
+                                        // steer every profile away from (see
+                                        // StandardV2RayBean.initializeDefaultValues): it
+                                        // can't carry a domain destination
+                                        // ("unsupported address"), which FakeIP/QUIC
+                                        // traffic needs. This subscription-import path was
+                                        // still writing that literal 0, silently
+                                        // re-breaking every VLESS/VMess proxy pulled from a
+                                        // Clash-Meta subscription whose packet-encoding
+                                        // isn't exactly "packetaddr" or "xudp" - bypassing
+                                        // both the bean's null-check default (this sets a
+                                        // real int, not null) and the one-time DB
+                                        // migration (this runs on every subscription sync,
+                                        // long after that migration already ran once).
                                         bean.packetEncoding = when ((opt.value as? String)) {
                                             "packetaddr" -> 1
-                                            "xudp" -> 2
-                                            else -> 0
+                                            else -> 2
                                         }
                                     }
 
