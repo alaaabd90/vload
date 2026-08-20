@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"time"
 	_ "unsafe"
 
 	"log"
@@ -86,6 +87,30 @@ func InitCore(process, cachePath, internalAssets, externalAssets string,
 }
 
 func sendFdToProtect(fd int, path string) error {
+	// vload: Load Balance's hedged picker (see weighted.go) can fire two
+	// dials within milliseconds of each other for a single new flow, and a
+	// normal page load already opens dozens of connections in a burst -
+	// each one going through this same local protect_path{,_a,_b} listener.
+	// That occasionally wins a race against protect_server's accept loop
+	// under Go scheduler pressure and comes back EPIPE near-instantly (seen
+	// live as "dial tcp <server>:443: broken pipe" surfacing in well under
+	// 10ms - too fast to be a real network failure to a remote VPS, and
+	// only ever this local IPC). It's a momentary local contention issue,
+	// not a real failure, so a single quick retry rides it out instead of
+	// failing a connection attempt outright.
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			time.Sleep(20 * time.Millisecond)
+		}
+		if lastErr = sendFdToProtectOnce(fd, path); lastErr == nil {
+			return nil
+		}
+	}
+	return lastErr
+}
+
+func sendFdToProtectOnce(fd int, path string) error {
 	socketFd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM, 0)
 	if err != nil {
 		return fmt.Errorf("failed to create unix socket: %w", err)
