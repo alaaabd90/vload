@@ -47,6 +47,7 @@ object Key {
 
     const val NETWORK_CHANGE_RESET_CONNECTIONS = "networkChangeResetConnections"
     const val WAKE_RESET_CONNECTIONS = "wakeResetConnections"
+    const val MIGRATED_PACKET_ENCODING_DEFAULT = "migratedPacketEncodingDefault"
     const val RULES_PROVIDER = "rulesProvider"
     const val LOG_LEVEL = "logLevel"
     const val LOG_BUF_SIZE = "logBufSize"

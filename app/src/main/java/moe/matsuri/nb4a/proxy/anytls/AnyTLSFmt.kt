@@ -57,6 +57,15 @@ fun AnyTLSBean.toUri(): String {
     if (!utlsFingerprint.isNullOrBlank()) {
         builder.addQueryParameter("fp", utlsFingerprint)
     }
+    if (!alpn.isNullOrBlank()) {
+        builder.addQueryParameter("alpn", alpn.replace("\n", ","))
+    }
+    if (!certificates.isNullOrBlank()) {
+        builder.addQueryParameter("cert", certificates)
+    }
+    if (!echConfig.isNullOrBlank()) {
+        builder.addQueryParameter("echConfig", echConfig)
+    }
     return builder.toLink("anytls")
 }
 
@@ -76,6 +85,15 @@ fun parseAnytls(url: String): AnyTLSBean {
         }
         link.queryParameter("fp")?.let {
             utlsFingerprint = it
+        }
+        link.queryParameter("alpn")?.let {
+            alpn = it
+        }
+        link.queryParameter("cert")?.let {
+            certificates = it
+        }
+        link.queryParameter("echConfig")?.let {
+            echConfig = it
         }
     }
 }

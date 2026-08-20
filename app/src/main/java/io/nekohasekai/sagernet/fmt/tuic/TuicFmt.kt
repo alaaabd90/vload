@@ -50,6 +50,21 @@ fun parseTuic(url: String): TuicBean {
         link.queryParameter("disable_sni")?.let {
             if (it == "1") disableSNI = true
         }
+        link.queryParameter("reduce_rtt")?.let {
+            if (it == "1") reduceRTT = true
+        }
+        link.queryParameter("mtu")?.toIntOrNull()?.let {
+            mtu = it
+        }
+        link.queryParameter("fast_connect")?.let {
+            if (it == "1") fastConnect = true
+        }
+        link.queryParameter("ca")?.let {
+            caText = it
+        }
+        link.queryParameter("custom_json")?.let {
+            customJSON = it
+        }
     }
 }
 
@@ -63,6 +78,11 @@ fun TuicBean.toUri(): String {
     if (alpn.isNotBlank()) builder.addQueryParameter("alpn", alpn)
     if (allowInsecure) builder.addQueryParameter("allow_insecure", "1")
     if (disableSNI) builder.addQueryParameter("disable_sni", "1")
+    if (reduceRTT) builder.addQueryParameter("reduce_rtt", "1")
+    if (mtu != 1400) builder.addQueryParameter("mtu", "$mtu")
+    if (fastConnect) builder.addQueryParameter("fast_connect", "1")
+    if (caText.isNotBlank()) builder.addQueryParameter("ca", caText)
+    if (customJSON.isNotBlank()) builder.addQueryParameter("custom_json", customJSON)
     if (name.isNotBlank()) builder.encodedFragment(name.urlSafe())
 
     return builder.toLink("tuic")

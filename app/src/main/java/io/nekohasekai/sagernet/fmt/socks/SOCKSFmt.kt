@@ -34,6 +34,17 @@ fun parseSOCKS(link: String): SOCKSBean {
             } catch (_: Exception) {
             }
         }
+        // protocolVersion() collapses SOCKS4 and SOCKS4A to the same
+        // "socks4" scheme on export, so the explicit "protocol" param
+        // (added below) is what actually distinguishes them on import -
+        // the scheme-based guess above is only a fallback for links from
+        // other clients that never had it.
+        url.queryParameter("protocol")?.toIntOrNull()?.let {
+            protocol = it
+        }
+        url.queryParameter("sUoT")?.let {
+            sUoT = it == "1"
+        }
     }
 }
 
@@ -42,6 +53,12 @@ fun SOCKSBean.toUri(): String {
     val builder = HttpUrl.Builder().scheme("http").host(serverAddress).port(serverPort)
     if (!username.isNullOrBlank()) builder.username(username)
     if (!password.isNullOrBlank()) builder.password(password)
+    if (protocol == SOCKSBean.PROTOCOL_SOCKS4A) {
+        builder.addQueryParameter("protocol", "$protocol")
+    }
+    if (sUoT) {
+        builder.addQueryParameter("sUoT", "1")
+    }
     if (!name.isNullOrBlank()) builder.encodedFragment(name.urlSafe())
     return builder.toLink("socks${protocolVersion()}")
 

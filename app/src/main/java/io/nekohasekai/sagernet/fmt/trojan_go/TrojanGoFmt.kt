@@ -42,6 +42,9 @@ fun parseTrojanGo(server: String): TrojanGoBean {
         link.queryParameter("plugin")?.let {
             plugin = it
         }
+        link.queryParameter("allowInsecure")?.let {
+            allowInsecure = it == "1"
+        }
         link.fragment.takeIf { !it.isNullOrBlank() }?.let {
             name = it
         }
@@ -72,6 +75,9 @@ fun TrojanGoBean.toUri(): String {
     }
     if (plugin.isNotBlank()) {
         builder.addQueryParameter("plugin", plugin)
+    }
+    if (allowInsecure) {
+        builder.addQueryParameter("allowInsecure", "1")
     }
 
     if (name.isNotBlank()) {

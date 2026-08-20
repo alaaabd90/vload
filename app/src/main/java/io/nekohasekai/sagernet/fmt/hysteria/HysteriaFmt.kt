@@ -31,6 +31,9 @@ fun parseHysteria1(url: String): HysteriaBean {
             authPayloadType = HysteriaBean.TYPE_STRING
             authPayload = it
         }
+        link.queryParameter("authType")?.toIntOrNull()?.also {
+            authPayloadType = it
+        }
         link.queryParameter("insecure")?.also {
             allowInsecure = it == "1" || it == "true"
         }
@@ -56,6 +59,21 @@ fun parseHysteria1(url: String): HysteriaBean {
                     protocol = HysteriaBean.PROTOCOL_WECHAT_VIDEO
                 }
             }
+        }
+        link.queryParameter("ca")?.also {
+            caText = it
+        }
+        link.queryParameter("recvWindowConn")?.toIntOrNull()?.also {
+            streamReceiveWindow = it
+        }
+        link.queryParameter("recvWindow")?.toIntOrNull()?.also {
+            connectionReceiveWindow = it
+        }
+        link.queryParameter("disableMtuDiscovery")?.also {
+            disableMtuDiscovery = it == "1"
+        }
+        link.queryParameter("hopInterval")?.toIntOrNull()?.also {
+            hopInterval = it
         }
     }
 }
@@ -86,18 +104,24 @@ fun parseHysteria2(url: String): HysteriaBean {
         link.queryParameter("insecure")?.also {
             allowInsecure = it == "1" || it == "true"
         }
-//        link.queryParameter("upmbps")?.also {
-//            uploadMbps = it.toIntOrNull() ?: uploadMbps
-//        }
-//        link.queryParameter("downmbps")?.also {
-//            downloadMbps = it.toIntOrNull() ?: downloadMbps
-//        }
+        link.queryParameter("upmbps")?.also {
+            uploadMbps = it.toIntOrNull() ?: uploadMbps
+        }
+        link.queryParameter("downmbps")?.also {
+            downloadMbps = it.toIntOrNull() ?: downloadMbps
+        }
         link.queryParameter("obfs-password")?.also {
             obfuscation = it
         }
 //        link.queryParameter("pinSHA256")?.also {
 //            // TODO your box do not support it
 //        }
+        link.queryParameter("ca")?.also {
+            caText = it
+        }
+        link.queryParameter("hopInterval")?.toIntOrNull()?.also {
+            hopInterval = it
+        }
     }
 }
 
@@ -133,6 +157,11 @@ fun HysteriaBean.toUri(): String {
         }
         if (authPayload.isNotBlank()) {
             builder.addQueryParameter("auth", authPayload)
+            // "auth" alone reads back as TYPE_STRING on import - carry the
+            // real type (TYPE_NONE/STRING/BASE64) explicitly so a profile
+            // built from JSON with a base64 auth payload doesn't get
+            // reinterpreted as a literal string after a lock/re-import.
+            builder.addQueryParameter("authType", "$authPayloadType")
         }
         builder.addQueryParameter("upmbps", "$uploadMbps")
         builder.addQueryParameter("downmbps", "$downloadMbps")
@@ -152,6 +181,15 @@ fun HysteriaBean.toUri(): String {
                 builder.addQueryParameter("protocol", "wechat-video")
             }
         }
+        if (streamReceiveWindow > 0) {
+            builder.addQueryParameter("recvWindowConn", "$streamReceiveWindow")
+        }
+        if (connectionReceiveWindow > 0) {
+            builder.addQueryParameter("recvWindow", "$connectionReceiveWindow")
+        }
+        if (disableMtuDiscovery) {
+            builder.addQueryParameter("disableMtuDiscovery", "1")
+        }
     } else {
         if (sni.isNotBlank()) {
             builder.addQueryParameter("sni", sni)
@@ -160,6 +198,18 @@ fun HysteriaBean.toUri(): String {
             builder.addQueryParameter("obfs", "salamander")
             builder.addQueryParameter("obfs-password", obfuscation)
         }
+        if (uploadMbps > 0) {
+            builder.addQueryParameter("upmbps", "$uploadMbps")
+        }
+        if (downloadMbps > 0) {
+            builder.addQueryParameter("downmbps", "$downloadMbps")
+        }
+    }
+    if (caText.isNotBlank()) {
+        builder.addQueryParameter("ca", caText)
+    }
+    if (hopInterval != 10) {
+        builder.addQueryParameter("hopInterval", "$hopInterval")
     }
     return builder.toLink(if (protocolVersion == 2) "hy2" else "hysteria")
 }

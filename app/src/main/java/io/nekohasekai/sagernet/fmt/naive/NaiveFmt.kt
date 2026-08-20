@@ -21,6 +21,7 @@ fun parseNaive(link: String): NaiveBean {
         certificates = url.queryParameter("cert")
         extraHeaders = url.queryParameter("extra-headers")?.unUrlSafe()?.replace("\r\n", "\n")
         insecureConcurrency = url.queryParameter("insecure-concurrency")?.toIntOrNull()
+        sUoT = url.queryParameter("sUoT") == "1"
         name = url.fragment
         initializeDefaultValues()
     }
@@ -49,6 +50,9 @@ fun NaiveBean.toUri(proxyOnly: Boolean = false): String {
         }
         if (insecureConcurrency > 0) {
             builder.addQueryParameter("insecure-concurrency", "$insecureConcurrency")
+        }
+        if (sUoT) {
+            builder.addQueryParameter("sUoT", "1")
         }
     }
     return builder.toLink(if (proxyOnly) proto else "naive+$proto", false)

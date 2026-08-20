@@ -29,6 +29,26 @@ data class VmessQRCode(
     var sni: String = "",
     var alpn: String = "",
     var fp: String = "",
+    // vload: extra fields so a locked-profile export/import round-trip
+    // (see LockedProfileCrypto) doesn't silently drop settings the
+    // standard v2rayN vmess:// schema has no slot for. Other clients
+    // reading a plain-shared vmess:// link ignore unrecognized JSON
+    // fields, so this doesn't break public-share compatibility.
+    var allowInsecure: String = "",
+    var cert: String = "",
+    var pbk: String = "",
+    var sid: String = "",
+    var ed: String = "",
+    var eh: String = "",
+    var sniFragment: String = "",
+    var enableECH: String = "",
+    var echConfig: String = "",
+    var enableMux: String = "",
+    var muxPadding: String = "",
+    var muxType: String = "",
+    var muxConcurrency: String = "",
+    var tcpFastOpen: String = "",
+    var packetEncoding: String = "",
 )
 
 fun StandardV2RayBean.isTLS(): Boolean {
@@ -243,6 +263,34 @@ fun StandardV2RayBean.parseDuckSoft(url: HttpUrl) {
         }
     }
 
+    url.queryParameter("tcpFastOpen")?.let {
+        tcpFastOpen = it == "1"
+    }
+
+    url.queryParameter("sniFragment")?.let {
+        sniFragment = it == "1"
+    }
+
+    url.queryParameter("enableECH")?.let {
+        enableECH = it == "1"
+        url.queryParameter("echConfig")?.let { config ->
+            echConfig = config
+        }
+    }
+
+    url.queryParameter("enableMux")?.let {
+        enableMux = it == "1"
+        url.queryParameter("muxPadding")?.let { padding ->
+            muxPadding = padding == "1"
+        }
+        url.queryParameter("muxType")?.let { mt ->
+            muxType = mt.toIntOrNull() ?: muxType
+        }
+        url.queryParameter("muxConcurrency")?.let { mc ->
+            muxConcurrency = mc.toIntOrNull() ?: muxConcurrency
+        }
+    }
+
     url.queryParameter("flow")?.let {
         if (isVLESS) {
             encryption = it.removeSuffix("-udp443")
@@ -349,7 +397,37 @@ fun parseV2RayN(link: String): VMessBean {
             if (bean.sni.isNullOrBlank()) bean.sni = bean.host
             bean.alpn = vmessQRCode.alpn
             bean.utlsFingerprint = vmessQRCode.fp
+            if (vmessQRCode.allowInsecure == "1") bean.allowInsecure = true
+            if (vmessQRCode.cert.isNotBlank()) bean.certificates = vmessQRCode.cert
+            if (vmessQRCode.pbk.isNotBlank()) bean.realityPubKey = vmessQRCode.pbk
+            if (vmessQRCode.sid.isNotBlank()) bean.realityShortId = vmessQRCode.sid
         }
+    }
+
+    if (vmessQRCode.ed.isNotBlank()) {
+        bean.wsMaxEarlyData = vmessQRCode.ed.toIntOrNull()
+        if (vmessQRCode.eh.isNotBlank()) bean.earlyDataHeaderName = vmessQRCode.eh
+    }
+
+    if (vmessQRCode.sniFragment == "1") bean.sniFragment = true
+
+    if (vmessQRCode.enableECH == "1") {
+        bean.enableECH = true
+        if (vmessQRCode.echConfig.isNotBlank()) bean.echConfig = vmessQRCode.echConfig
+    }
+
+    if (vmessQRCode.enableMux == "1") {
+        bean.enableMux = true
+        if (vmessQRCode.muxPadding == "1") bean.muxPadding = true
+        vmessQRCode.muxType.toIntOrNull()?.let { bean.muxType = it }
+        vmessQRCode.muxConcurrency.toIntOrNull()?.let { bean.muxConcurrency = it }
+    }
+
+    if (vmessQRCode.tcpFastOpen == "1") bean.tcpFastOpen = true
+
+    when (vmessQRCode.packetEncoding) {
+        "packet" -> bean.packetEncoding = 1
+        "xudp" -> bean.packetEncoding = 2
     }
 
     return bean
@@ -423,6 +501,37 @@ fun VMessBean.toV2rayN(): String {
         sni = bean.sni
         alpn = bean.alpn.replace("\n", ",")
         fp = bean.utlsFingerprint
+
+        if (bean.allowInsecure) allowInsecure = "1"
+        if (bean.certificates.isNotBlank()) cert = bean.certificates
+        if (bean.realityPubKey.isNotBlank()) pbk = bean.realityPubKey
+        if (bean.realityShortId.isNotBlank()) sid = bean.realityShortId
+
+        if (bean.type == "ws" && bean.wsMaxEarlyData > 0) {
+            ed = bean.wsMaxEarlyData.toString()
+            if (bean.earlyDataHeaderName.isNotBlank()) eh = bean.earlyDataHeaderName
+        }
+
+        if (bean.sniFragment) sniFragment = "1"
+
+        if (bean.enableECH) {
+            enableECH = "1"
+            if (bean.echConfig.isNotBlank()) echConfig = bean.echConfig
+        }
+
+        if (bean.enableMux) {
+            enableMux = "1"
+            if (bean.muxPadding) muxPadding = "1"
+            muxType = bean.muxType.toString()
+            muxConcurrency = bean.muxConcurrency.toString()
+        }
+
+        if (bean.tcpFastOpen) tcpFastOpen = "1"
+
+        when (bean.packetEncoding) {
+            1 -> packetEncoding = "packet"
+            2 -> packetEncoding = "xudp"
+        }
     }.let {
         NGUtil.encode(Gson().toJson(it))
     }
@@ -511,6 +620,30 @@ fun StandardV2RayBean.toUriVMessVLESSTrojan(isTrojan: Boolean): String {
         2 -> {
             builder.addQueryParameter("packetEncoding", "xudp")
         }
+    }
+
+    if (tcpFastOpen) {
+        builder.addQueryParameter("tcpFastOpen", "1")
+    }
+
+    if (sniFragment) {
+        builder.addQueryParameter("sniFragment", "1")
+    }
+
+    if (enableECH) {
+        builder.addQueryParameter("enableECH", "1")
+        if (echConfig.isNotBlank()) {
+            builder.addQueryParameter("echConfig", echConfig)
+        }
+    }
+
+    if (enableMux) {
+        builder.addQueryParameter("enableMux", "1")
+        if (muxPadding) {
+            builder.addQueryParameter("muxPadding", "1")
+        }
+        builder.addQueryParameter("muxType", "$muxType")
+        builder.addQueryParameter("muxConcurrency", "$muxConcurrency")
     }
 
     if (name.isNotBlank()) {

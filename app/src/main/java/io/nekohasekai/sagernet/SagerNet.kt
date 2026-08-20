@@ -19,6 +19,8 @@ import androidx.core.content.getSystemService
 import go.Seq
 import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.fmt.v2ray.StandardV2RayBean
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.isOss
 import io.nekohasekai.sagernet.ktx.isPreview
@@ -87,6 +89,7 @@ class SagerNet : Application(),
                 }
 
                 updateNotificationChannels()
+                migratePacketEncodingDefaults()
             }
         }
 
@@ -100,6 +103,36 @@ class SagerNet : Application(),
                     .penaltyLog()
                     .build()
             )
+        }
+    }
+
+    // One-time fixup for profiles saved before StandardV2RayBean started
+    // defaulting packetEncoding to xudp (2). Those rows persisted an
+    // explicit 0 ("none"), so the new null-check default never applies to
+    // them on load - without this they're stuck on the packet_encoding=""
+    // path that can't carry a domain destination for UDP/QUIC.
+    private fun migratePacketEncodingDefaults() {
+        if (DataStore.migratedPacketEncodingDefault) return
+        try {
+            val toUpdate = SagerDatabase.proxyDao.getAll().mapNotNull { entity ->
+                val bean = try {
+                    entity.requireBean()
+                } catch (_: Exception) {
+                    null
+                }
+                if (bean is StandardV2RayBean && bean.packetEncoding == 0) {
+                    bean.packetEncoding = 2
+                    entity
+                } else null
+            }
+            if (toUpdate.isNotEmpty()) {
+                SagerDatabase.proxyDao.updateProxy(toUpdate)
+                Logs.d("migratePacketEncodingDefaults: updated ${toUpdate.size} profile(s)")
+            }
+        } catch (e: Exception) {
+            Logs.w(e)
+        } finally {
+            DataStore.migratedPacketEncodingDefault = true
         }
     }
 
