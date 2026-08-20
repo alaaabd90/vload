@@ -194,14 +194,8 @@ fun buildConfig(
                 return s
             }
             return when (ipv6Mode) {
-                // prefer_ipv4 still lets an AAAA answer through when a
-                // domain has both A/AAAA records - confirmed live that IPv6
-                // is actively broken on the Load Balance weighted outbound's
-                // packet-relay path ("unsupported address" from sing's
-                // address serializer), not just suboptimal, so exclude it
-                // outright instead of merely preferring IPv4.
                 IPv6Mode.DISABLE -> "ipv4_only"
-                IPv6Mode.ENABLE -> "ipv4_only"
+                IPv6Mode.ENABLE -> "prefer_ipv4"
                 IPv6Mode.PREFER -> "prefer_ipv6"
                 IPv6Mode.ONLY -> "ipv6_only"
                 else -> null
@@ -814,26 +808,15 @@ fun buildConfig(
             })
             // FakeDNS obj
             if (useFakeDns) {
-                // inet6_range deliberately omitted: the "strategy" field on
-                // the dns-fake server below is dead configuration for a
-                // fakeip transport (sing-box's dns/transport/fakeip/fakeip.go
-                // Exchange() never reads Strategy - only checks whether
-                // inet6_range produced a valid, enabled range). With it set,
-                // every AAAA query got a real fake-IPv6 answer regardless of
-                // any strategy/domain_strategy setting downstream, which is
-                // what fed IPv6 destinations into the Load Balance weighted
-                // outbound's packet-relay path and broke it ("unsupported
-                // address" from sing's address serializer, confirmed live).
-                // Leaving it unset makes inet6Enabled=false, so AAAA queries
-                // get an empty response instead of a fake IPv6 - IPv6 is
-                // structurally impossible to reach through fake DNS now.
                 dns.fakeip = DNSFakeIPOptions().apply {
                     enabled = true
                     inet4_range = "198.18.0.0/15"
+                    inet6_range = "fc00::/18"
                 }
                 dns.servers.add(DNSServerOptions().apply {
                     address = "fakeip"
                     tag = "dns-fake"
+                    strategy = "ipv4_only"
                 })
                 dns.rules.add(DNSRule_DefaultOptions().apply {
                     inbound = listOf("tun-in")
