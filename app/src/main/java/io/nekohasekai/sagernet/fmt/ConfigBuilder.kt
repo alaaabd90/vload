@@ -52,6 +52,18 @@ const val TAG_BLOCK = "block"
 // combines both. See buildLoadBalance and the dns-remote server below.
 const val TAG_DNS_PROXY = "dns-proxy"
 
+// vload: same reasoning as TAG_DNS_PROXY, applied to QUIC (HTTP/3) traffic.
+// A QUIC connection is bound to one path for its whole life - the server
+// only ever expects packets from the source IP (behind Connection ID) it
+// negotiated the handshake with. TAG_PROXY's adaptive weighted picker can
+// legitimately hand consecutive flows (or a NAT-expired same flow) to
+// different slots, i.e. different exit IPs/networks; a QUIC server or a
+// middlebox on the path can read that as a protocol violation rather than
+// a migration, surfacing as ERR_QUIC_PROTOCOL_ERROR client-side. Route
+// sniffed QUIC through the same single-path-with-failover group as DNS
+// instead of the dual-path one. See buildLoadBalance.
+const val TAG_QUIC_PROXY = "quic-proxy"
+
 const val LOCALHOST = "127.0.0.1"
 
 class ConfigBuildResult(
@@ -514,6 +526,17 @@ fun buildConfig(
                 )
             })
 
+            // Same two slots again, for QUIC - see TAG_QUIC_PROXY.
+            outbounds.add(0, Outbound_WeightedOptions().apply {
+                type = "weighted"
+                tag = TAG_QUIC_PROXY
+                mode = "priority"
+                outbounds = listOf(
+                    WeightedOutboundMember().apply { outbound = slotATag },
+                    WeightedOutboundMember().apply { outbound = slotBTag },
+                )
+            })
+
             // route.final was never set, so sing-box defaulted it to the
             // first outbound in the list - and since TAG_DNS_PROXY gets
             // inserted at index 0 *after* TAG_PROXY (both use add(0, ...)),
@@ -784,6 +807,16 @@ fun buildConfig(
                     inbound = sniffInboundTags
                     action = "sniff"
                 })
+                // Must be appended (not add(0, ...)) so it lands after the
+                // sniff rule above in evaluation order - protocol="quic"
+                // only matches once sniffing has actually classified the
+                // flow. See TAG_QUIC_PROXY.
+                if (proxy.type == ProxyEntity.TYPE_LOAD_BALANCE) {
+                    route.rules.add(Rule_DefaultOptions().apply {
+                        protocol = listOf("quic")
+                        outbound = TAG_QUIC_PROXY
+                    })
+                }
             }
             // built-in DNS rules
             route.rules.add(0, Rule_DefaultOptions().apply {
