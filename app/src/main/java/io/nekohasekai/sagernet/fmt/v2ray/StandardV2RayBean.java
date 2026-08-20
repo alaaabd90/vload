@@ -102,18 +102,7 @@ public abstract class StandardV2RayBean extends AbstractBean {
         if (wsMaxEarlyData == null) wsMaxEarlyData = 0;
         if (allowInsecure == null) allowInsecure = false;
         if (sniFragment == null) sniFragment = false;
-        // 0 maps to packet_encoding="" in V2RayFmt.kt, which enables
-        // neither xudp nor packetaddr in sing-box's VLESS/VMess outbound
-        // (protocol/vless/outbound.go) - that default path can't encode a
-        // domain destination ("unsupported address"), and fakeip's reverse
-        // mapping means the outbound almost always receives a domain, not
-        // a resolved IP, for UDP/QUIC traffic. sing-box's own default when
-        // packet_encoding is omitted entirely is xudp=true; match that
-        // here instead of silently downgrading every profile to the
-        // broken mode. Confirmed live: this was the actual cause of
-        // intermittent ERR_CONNECTION_REFUSED on dual-stack/QUIC domains,
-        // not IPv4/IPv6 (ruled out separately).
-        if (packetEncoding == null) packetEncoding = 2;
+        if (packetEncoding == null) packetEncoding = 0;
 
         if (realityPubKey == null) realityPubKey = "";
         if (realityShortId == null) realityShortId = "";
