@@ -96,12 +96,16 @@ func sendFdToProtect(fd int, path string) error {
 	// live as "dial tcp <server>:443: broken pipe" surfacing in well under
 	// 10ms - too fast to be a real network failure to a remote VPS, and
 	// only ever this local IPC). It's a momentary local contention issue,
-	// not a real failure, so a single quick retry rides it out instead of
-	// failing a connection attempt outright.
+	// not a real failure. A single 20ms retry (1.4.8) wasn't always enough
+	// under a sustained burst (confirmed live: still failing occasionally
+	// on 1.4.8) - back off further across up to 4 attempts (20/40/80ms)
+	// instead of giving up after one.
 	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
+	backoff := 20 * time.Millisecond
+	for attempt := 0; attempt < 4; attempt++ {
 		if attempt > 0 {
-			time.Sleep(20 * time.Millisecond)
+			time.Sleep(backoff)
+			backoff *= 2
 		}
 		if lastErr = sendFdToProtectOnce(fd, path); lastErr == nil {
 			return nil
