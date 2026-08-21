@@ -98,13 +98,29 @@ class VpnService : BaseVpnService(),
             // not on every capabilities refresh of the same still-current
             // network, so a routine signal-strength update doesn't thrash
             // every open connection on the *other*, unaffected slot too.
+            //
+            // Resetting used to mean Libcore.resetAllConnections(true) - a
+            // global close of every connection on the whole box, not just
+            // this slot. Confirmed live: a routine cell handover or Wi-Fi
+            // AP roam on ONE slot was closing the OTHER, unaffected slot's
+            // perfectly healthy connections too (surfaced as pages
+            // "unexpectedly closed the connection" mid-browse for no
+            // apparent reason). resetSlotConnections closes only the
+            // connections actually dialed on the slot that changed.
             val previous = lastSlotNetwork.getOrNull(slot)
             lastSlotNetwork[slot] = network
             val isFirstAcquisition = previous == null && network != null
             if (previous != network && !isFirstAcquisition && delivered != null) {
                 Logs.i("vload: slot $slot network changed ($previous -> $network), resetting connections")
                 if (DataStore.networkChangeResetConnections) {
-                    Libcore.resetAllConnections(true)
+                    val closed = delivered.box.resetSlotConnections(slot)
+                    if (closed < 0) {
+                        // Not a weighted (vload) outbound - shouldn't happen
+                        // since this controller only runs for Load Balance
+                        // profiles, but fall back to the global reset rather
+                        // than silently doing nothing.
+                        Libcore.resetAllConnections(true)
+                    }
                 }
             }
         }

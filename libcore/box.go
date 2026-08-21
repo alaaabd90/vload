@@ -232,6 +232,21 @@ func (b *BoxInstance) UpdateNetworkAvailability(slot int32, available bool) {
 	}
 }
 
+// ResetSlotConnections closes every connection currently open on the given
+// vload load-balance slot (0 or 1) and returns how many it closed. Use this
+// instead of ResetAllConnections when only one slot's physical network
+// actually changed - a global reset also kills the other, unaffected slot's
+// perfectly healthy connections, which is unnecessary collateral damage a
+// routine network change (cell handover, Wi-Fi roaming) shouldn't cause. A
+// negative return means the running config isn't using a weighted (vload)
+// outbound, so there was nothing slot-scoped to do.
+func (b *BoxInstance) ResetSlotConnections(slot int32) int32 {
+	if b.weighted == nil {
+		return -1
+	}
+	return int32(b.weighted.CloseMember(int(slot)))
+}
+
 func UrlTest(i *BoxInstance, link string, timeout int32) (latency int32, err error) {
 	defer device.DeferPanicToError("box.UrlTest", func(err_ error) { err = err_ })
 	var connectionTracker adapter.ConnectionTracker
