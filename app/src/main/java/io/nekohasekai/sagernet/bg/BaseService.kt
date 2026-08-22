@@ -319,7 +319,9 @@ class BaseService {
                         // match.
                         val isLoadBalance =
                             data.proxy?.profile?.type == ProxyEntity.TYPE_LOAD_BALANCE
-                        if (DataStore.networkChangeResetConnections && !isLoadBalance) {
+                        if (isLoadBalance) {
+                            Logs.d("vload: default-network change ignored (Load Balance handles its own per-slot reset)")
+                        } else if (DataStore.networkChangeResetConnections) {
                             Libcore.resetAllConnections(true)
                         }
                     }

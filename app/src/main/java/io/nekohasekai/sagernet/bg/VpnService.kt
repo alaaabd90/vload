@@ -118,7 +118,12 @@ class VpnService : BaseVpnService(),
                         // Not a weighted (vload) outbound - shouldn't happen
                         // since this controller only runs for Load Balance
                         // profiles, but fall back to the global reset rather
-                        // than silently doing nothing.
+                        // than silently doing nothing. Logged because if this
+                        // ever fires in practice it means b.weighted was nil
+                        // for an active Load Balance session, which is itself
+                        // a bug worth knowing about, not just a theoretical
+                        // fallback.
+                        Logs.w("vload: resetSlotConnections($slot) returned negative (no weighted outbound?), falling back to global reset")
                         Libcore.resetAllConnections(true)
                     }
                 }
