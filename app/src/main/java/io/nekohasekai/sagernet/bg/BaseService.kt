@@ -15,6 +15,7 @@ import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
 import io.nekohasekai.sagernet.bg.proto.ProxyInstance
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.plugin.PluginManager
@@ -300,7 +301,25 @@ class BaseService {
                     // handover happened).
                     if (oldNetwork != null && it != null && oldNetwork != it) {
                         Logs.d("Network changed: $oldName -> $upstreamInterfaceName")
-                        if (DataStore.networkChangeResetConnections) {
+                        // vload Load Balance sessions hold two networks (WiFi +
+                        // SIM) live at once via VloadNetworkController, which
+                        // makes Android's own "default network" arbitration
+                        // between them flip far more often than it would for a
+                        // single-network profile - and each flip here is mostly
+                        // noise, not evidence either slot's own bound network
+                        // actually changed. Load Balance already resets
+                        // precisely on a real per-slot change via
+                        // VloadNetworkController's own onSlotChanged callback
+                        // (see resetSlotConnections in VpnService.kt). Doing the
+                        // same thing again here, globally, on every default-
+                        // network flip was the same "reset killed the healthy
+                        // slot too" bug already fixed for that other listener
+                        // (see 948117e) - just reached through this separate,
+                        // profile-type-agnostic one that was never updated to
+                        // match.
+                        val isLoadBalance =
+                            data.proxy?.profile?.type == ProxyEntity.TYPE_LOAD_BALANCE
+                        if (DataStore.networkChangeResetConnections && !isLoadBalance) {
                             Libcore.resetAllConnections(true)
                         }
                     }
