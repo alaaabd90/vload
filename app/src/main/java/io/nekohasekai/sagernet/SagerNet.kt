@@ -90,6 +90,7 @@ class SagerNet : Application(),
 
                 updateNotificationChannels()
                 migratePacketEncodingDefaults()
+                migrateDirectDnsDefault()
             }
         }
 
@@ -133,6 +134,30 @@ class SagerNet : Application(),
             Logs.w(e)
         } finally {
             DataStore.migratedPacketEncodingDefault = true
+        }
+    }
+
+    // One-time fixup for the Direct DNS setting: 223.5.5.5 (AliDNS) was the
+    // default inherited from the upstream China-focused fork. It applies
+    // mainland China content filtering, which returns HTTP 403 for a wide
+    // range of ordinary Western services (Google, YouTube, Play services,
+    // ad/tracker domains vload still needs to resolve even when blocking
+    // them) - confirmed live via a captured session showing dozens of
+    // distinct domains failing "lookup ...: unexpected status: 403
+    // Forbidden" through outbound/direct. Only touches installs still sitting
+    // on that exact untouched default - anyone who's deliberately set their
+    // own Direct DNS keeps it.
+    private fun migrateDirectDnsDefault() {
+        if (DataStore.migratedDirectDnsDefault) return
+        try {
+            if (DataStore.directDns == "https://223.5.5.5/dns-query") {
+                DataStore.directDns = "https://1.1.1.1/dns-query"
+                Logs.d("migrateDirectDnsDefault: switched off the AliDNS default")
+            }
+        } catch (e: Exception) {
+            Logs.w(e)
+        } finally {
+            DataStore.migratedDirectDnsDefault = true
         }
     }
 

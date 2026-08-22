@@ -92,6 +92,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var networkChangeResetConnections by configurationStore.boolean(Key.NETWORK_CHANGE_RESET_CONNECTIONS) { true }
     var wakeResetConnections by configurationStore.boolean(Key.WAKE_RESET_CONNECTIONS)
     var migratedPacketEncodingDefault by configurationStore.boolean(Key.MIGRATED_PACKET_ENCODING_DEFAULT)
+    var migratedDirectDnsDefault by configurationStore.boolean(Key.MIGRATED_DIRECT_DNS_DEFAULT)
 
     //
 
@@ -120,7 +121,15 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var globalCustomConfig by configurationStore.string(Key.GLOBAL_CUSTOM_CONFIG) { "" }
 
     var remoteDns by configurationStore.string(Key.REMOTE_DNS) { "https://dns.google/dns-query" }
-    var directDns by configurationStore.string(Key.DIRECT_DNS) { "https://223.5.5.5/dns-query" }
+    // 223.5.5.5 (AliDNS) was inherited from the upstream China-focused fork -
+    // it applies mainland China content filtering, which returned HTTP 403
+    // for a wide range of ordinary Western services (Google, YouTube, Play
+    // services, ad/tracker domains vload still needs to resolve even when
+    // blocking them) when queried by vload's actual, non-China userbase.
+    // 1.1.1.1 is a neutral, globally-reliable resolver; kept distinct from
+    // remoteDns's default (dns.google) so both DNS paths aren't a single
+    // provider's outage away from failing together.
+    var directDns by configurationStore.string(Key.DIRECT_DNS) { "https://1.1.1.1/dns-query" }
     var enableDnsRouting by configurationStore.boolean(Key.ENABLE_DNS_ROUTING) { true }
     var enableFakeDns by configurationStore.boolean(Key.ENABLE_FAKEDNS) { true }
 
