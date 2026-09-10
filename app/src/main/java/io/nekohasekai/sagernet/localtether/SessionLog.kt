@@ -63,7 +63,16 @@ object SessionLog {
 
             file.appendText("$stamp ${level.name.padEnd(5)} $message\n")
 
-            if (isNew) file.setReadable(true, false)
+            if (isNew) {
+                // Both the app (its own UID) and the daemon (shell UID) write
+                // to this same path - whichever creates it first must not end
+                // up the only one able to write it. setReadable alone doesn't
+                // cover that: it fixed read access for the other side but
+                // left write EACCES for it, which silently dropped every log
+                // line from whichever side didn't create the file.
+                file.setReadable(true, false)
+                file.setWritable(true, false)
+            }
 
             truncateIfLarge(writePath)
         }.onFailure { failure ->

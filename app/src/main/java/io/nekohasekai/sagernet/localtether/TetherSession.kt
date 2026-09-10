@@ -37,6 +37,8 @@ class TetherSession(private val context: Context) {
                 "contract ${TetherService.CONTRACT_VERSION}",
         )
 
+        killOrphanedSiblings()
+
         return runCatching { bringUp() }
             .getOrElse { failure ->
                 Log.e(TAG, "start failed", failure)
@@ -96,6 +98,58 @@ class TetherSession(private val context: Context) {
             else -> "$problem; teardown incomplete: $teardownProblem"
         }
     }
+
+    /**
+     * A daemon process is spawned fresh by Shizuku on every bind and is
+     * completely independent of the app's own process lifecycle - reinstalling
+     * or force-stopping the app, or the app simply getting killed in the
+     * background, does not touch it. If a previous session's process is still
+     * alive when a new one starts (its own stop() was never reached), it's
+     * still genuinely holding its own TUN open and still genuinely registered
+     * as a tethering-preferred network - not a stale flag preferTestNetworks()
+     * below can just re-toggle away, since that only ever affects a global
+     * preference, not another process's live file descriptor. That's what
+     * made repeated enable/disable intermittently fail: verifyUpstream()
+     * finding an old sibling's interface still live alongside the new one.
+     * Killing it here (same "shell" UID we're already running as, so a plain
+     * kill() is enough - no extra privilege needed) is the actual fix.
+     */
+    private fun killOrphanedSiblings() {
+        val myPid = android.os.Process.myPid()
+        val myName = processCmdline(myPid) ?: return
+
+        val pidDirs = java.io.File("/proc").listFiles { file -> file.name.toIntOrNull() != null }
+            ?: return
+
+        var killedAny = false
+        for (pidDir in pidDirs) {
+            val pid = pidDir.name.toIntOrNull() ?: continue
+            if (pid == myPid) continue
+            if (processCmdline(pid) != myName) continue
+
+            SessionLog.warn(
+                "killing orphaned sibling daemon pid=$pid ($myName) - a previous session's " +
+                    "process outlived its app and was still holding its own test network open",
+            )
+            runCatching { android.os.Process.killProcess(pid) }
+                .onFailure { failure -> SessionLog.warn("could not kill pid=$pid: ${failure.message}") }
+            killedAny = true
+        }
+
+        // killProcess() doesn't block until the kernel actually reclaims the
+        // process's resources (closing its TUN fd, tearing down its test
+        // network) - give that a moment before creating our own.
+        if (killedAny) Thread.sleep(SIBLING_TEARDOWN_GRACE_MS)
+    }
+
+    private fun processCmdline(pid: Int): String? = runCatching {
+        // /proc/pid/cmdline is a NUL-separated argv; the process's "nice
+        // name" (what ps shows, e.g. "app.vload.android.debug:local_tether")
+        // is the first segment.
+        val raw = java.io.File("/proc/$pid/cmdline").readText()
+        val end = raw.indexOf(NUL_CHAR).let { if (it < 0) raw.length else it }
+        raw.substring(0, end).trim().takeIf { it.isNotBlank() }
+    }.getOrNull()
 
     private fun preferTestNetworks() {
         val api = TetheringPreferenceApi(context)
@@ -233,5 +287,8 @@ class TetherSession(private val context: Context) {
 
         const val DOWNSTREAM_SETTLE_MS = 10_000L
         const val DOWNSTREAM_POLL_MS = 500L
+
+        const val SIBLING_TEARDOWN_GRACE_MS = 500L
+        val NUL_CHAR: Char = 0.toChar()
     }
 }
