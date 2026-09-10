@@ -159,6 +159,15 @@ class TetherSession(private val context: Context) {
     }
 
     private fun restartDownstream() {
+        // Toggling the hotspot here can briefly disrupt the same Wi-Fi
+        // radio's regular client connection too, which shows up to the rest
+        // of the app as a "new" default network a moment later - tell
+        // vload's own network-change-triggered connection reset to ignore
+        // that for a bit, since it's not a real change and resetting the
+        // main VPN's connections over it is pure disruption. The window
+        // covers stop+start+re-associate+settle with slack to spare.
+        NetworkChangeSuppression.suppressBriefly(SIBLING_TEARDOWN_GRACE_MS + DOWNSTREAM_SETTLE_MS * 2)
+
         val control = DownstreamControl(context)
         control.stopWifiTethering()
 

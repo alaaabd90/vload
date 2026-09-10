@@ -112,7 +112,12 @@ class VpnService : BaseVpnService(),
             val isFirstAcquisition = previous == null && network != null
             if (previous != network && !isFirstAcquisition && delivered != null) {
                 Logs.i("vload: slot $slot network changed ($previous -> $network), resetting connections")
-                if (DataStore.networkChangeResetConnections) {
+                if (io.nekohasekai.sagernet.localtether.NetworkChangeSuppression.isActive) {
+                    // See NetworkChangeSuppression's doc comment: Local Shizuku
+                    // Tethering's hotspot restart can cause exactly this kind
+                    // of spurious per-slot network change on some devices.
+                    Logs.d("vload: slot $slot change ignored (local Shizuku tethering is restarting the hotspot)")
+                } else if (DataStore.networkChangeResetConnections) {
                     val closed = delivered.box.resetSlotConnections(slot)
                     if (closed < 0) {
                         // Not a weighted (vload) outbound - shouldn't happen

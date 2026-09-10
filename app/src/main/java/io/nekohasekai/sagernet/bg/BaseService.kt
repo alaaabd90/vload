@@ -325,7 +325,13 @@ class BaseService {
                         // match.
                         val isLoadBalance =
                             data.proxy?.profile?.type == ProxyEntity.TYPE_LOAD_BALANCE
-                        if (isLoadBalance) {
+                        if (io.nekohasekai.sagernet.localtether.NetworkChangeSuppression.isActive) {
+                            // Local Shizuku Tethering just restarted the hotspot,
+                            // which can cause exactly this kind of spurious
+                            // default-network change on some devices - see
+                            // NetworkChangeSuppression's own doc comment.
+                            Logs.d("vload: default-network change ignored (local Shizuku tethering is restarting the hotspot)")
+                        } else if (isLoadBalance) {
                             Logs.d("vload: default-network change ignored (Load Balance handles its own per-slot reset)")
                         } else if (DataStore.networkChangeResetConnections) {
                             Libcore.resetAllConnections(true)
