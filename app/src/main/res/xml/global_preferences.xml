@@ -213,6 +213,16 @@
             app:title="@string/device_hwid" />
     </PreferenceCategory>
 
+    <PreferenceCategory
+        app:key="localShizukuTetherCategory"
+        app:title="@string/local_shizuku_tether_category">
+        <SwitchPreference
+            app:defaultValue="false"
+            app:key="localShizukuTetherEnabled"
+            app:summary="@string/local_shizuku_tether_sum"
+            app:title="@string/local_shizuku_tether" />
+    </PreferenceCategory>
+
     <PreferenceCategory app:title="@string/cag_misc">
         <moe.matsuri.nb4a.ui.UrlTestPreference
             app:defaultValue="http://cp.cloudflare.com/"

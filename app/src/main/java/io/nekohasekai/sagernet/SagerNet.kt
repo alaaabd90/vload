@@ -34,6 +34,7 @@ import moe.matsuri.nb4a.NativeInterface
 import moe.matsuri.nb4a.net.LocalResolverImpl
 import moe.matsuri.nb4a.utils.JavaUtil
 import moe.matsuri.nb4a.utils.cleanWebview
+import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.io.File
 import androidx.work.Configuration as WorkConfiguration
 
@@ -57,6 +58,13 @@ class SagerNet : Application(),
         super.onCreate()
 
         Thread.setDefaultUncaughtExceptionHandler(CrashHandler)
+
+        // Needed for the local Shizuku tethering feature's TestNetworkManager/
+        // TetheringManager hidden-API reflection (io.nekohasekai.sagernet.localtether) -
+        // lifting the restriction has no effect on anything that doesn't use it.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            HiddenApiBypass.addHiddenApiExemptions("Landroid/net/", "L")
+        }
 
         if (isMainProcess || isBgProcess) {
             externalAssets.mkdirs()
@@ -242,6 +250,10 @@ class SagerNet : Application(),
                             "connection-test",
                             application.getText(R.string.connection_test),
                             NotificationManager.IMPORTANCE_DEFAULT
+                        ), NotificationChannel(
+                            "service-tethering",
+                            application.getText(R.string.service_tethering),
+                            NotificationManager.IMPORTANCE_LOW
                         )
                     )
                 )

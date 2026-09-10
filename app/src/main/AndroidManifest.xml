@@ -3,7 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:installLocation="internalOnly">
 
-    <uses-sdk tools:overrideLibrary="com.google.zxing.client.android, com.blacksquircle.ui.editorkit" />
+    <uses-sdk tools:overrideLibrary="com.google.zxing.client.android, com.blacksquircle.ui.editorkit, go.datapath.gojni, rikka.shizuku.provider, rikka.shizuku.api, rikka.shizuku.shared, rikka.shizuku.aidl" />
 
     <permission
         android:name="${applicationId}.SERVICE"
@@ -30,6 +30,15 @@
 
     <!-- vload dual-network load balancing: enumerate/target a specific SIM's data network -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
+    <!-- Local Shizuku tethering (io.nekohasekai.sagernet.localtether): granted only
+         when acquired through Shizuku's shell/root privilege, same as vhost/shizzi. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_TEST_NETWORKS"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission
+        android:name="android.permission.TETHER_PRIVILEGED"
+        tools:ignore="ProtectedPermissions" />
 
     <uses-feature
         android:name="android.software.leanback"
@@ -331,6 +340,15 @@
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"
             tools:node="remove" />
+
+        <!-- Required by Shizuku's client library (local Shizuku tethering feature) -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <receiver
             android:name="io.nekohasekai.sagernet.BootReceiver"

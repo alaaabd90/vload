@@ -251,6 +251,8 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     var shareVpnLocalNetwork by configurationStore.boolean(Key.SHARE_VPN_LOCAL_NETWORK)
 
+    var localShizukuTetherEnabled by configurationStore.boolean(Key.LOCAL_SHIZUKU_TETHER_ENABLED)
+
     var lbSlotANetworkKind by profileCacheStore.stringToInt(Key.LB_SLOT_A_NETWORK_KIND)
     var lbSlotASubscriptionId by profileCacheStore.stringToInt(Key.LB_SLOT_A_SUBSCRIPTION_ID) { -1 }
     var lbSlotAProxyId by profileCacheStore.long(Key.LB_SLOT_A_PROXY_ID) { -1L }

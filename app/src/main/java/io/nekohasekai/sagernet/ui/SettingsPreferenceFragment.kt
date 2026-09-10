@@ -109,6 +109,37 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             true
         }
 
+        val localShizukuTetherCategory = findPreference<PreferenceCategory>("localShizukuTetherCategory")!!
+        if (Build.VERSION.SDK_INT < 33) {
+            localShizukuTetherCategory.remove()
+        } else {
+            val localShizukuTether = findPreference<SwitchPreference>("localShizukuTetherEnabled")!!
+            localShizukuTether.setOnPreferenceChangeListener { _, newValue ->
+                if (newValue as Boolean) {
+                    if (!io.nekohasekai.sagernet.localtether.LocalShizukuTether.isShizukuAvailable()) {
+                        MaterialAlertDialogBuilder(requireContext())
+                            .setTitle(R.string.local_shizuku_tether)
+                            .setMessage(R.string.local_shizuku_tether_not_installed)
+                            .setPositiveButton(android.R.string.ok, null)
+                            .show()
+                        return@setOnPreferenceChangeListener false
+                    }
+                    // Starts right away, independent of whether vload's own VPN
+                    // service is running - matching how shizzi itself worked
+                    // standalone. This does NOT depend on the VPN reload flow
+                    // (needReload()'s Snackbar requires an extra tap on "Apply"
+                    // the user has no reason to expect for a toggle that looks
+                    // self-contained), and it's not gated on the VPN being up:
+                    // VpnWatchdog (ported unchanged) detects and binds to
+                    // whatever VPN is active on its own, same as it always did.
+                    io.nekohasekai.sagernet.localtether.LocalShizukuTether.startShared()
+                } else {
+                    io.nekohasekai.sagernet.localtether.LocalShizukuTether.stopShared()
+                }
+                true
+            }
+        }
+
         val mixedPort = findPreference<EditTextPreference>(Key.MIXED_PORT)!!
         val allowAccess = findPreference<Preference>(Key.ALLOW_ACCESS)!!
         val appendHttpProxy = findPreference<SwitchPreference>(Key.APPEND_HTTP_PROXY)!!

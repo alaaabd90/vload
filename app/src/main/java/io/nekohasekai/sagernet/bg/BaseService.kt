@@ -218,6 +218,9 @@ class BaseService {
             if (DataStore.shareVpnLocalNetwork) {
                 LocalShareServer.startShared(DataStore.mixedPort)
             }
+            if (DataStore.localShizukuTetherEnabled) {
+                io.nekohasekai.sagernet.localtether.LocalShizukuTether.startShared()
+            }
         }
 
         fun startRunner() {
@@ -229,6 +232,9 @@ class BaseService {
         fun killProcesses() {
             data.proxy?.close()
             LocalShareServer.stopShared()
+            if (DataStore.localShizukuTetherEnabled) {
+                io.nekohasekai.sagernet.localtether.LocalShizukuTether.stopShared()
+            }
             wakeLock?.apply {
                 release()
                 wakeLock = null

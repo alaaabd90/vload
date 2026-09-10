@@ -67,6 +67,13 @@ dependencies {
 
     implementation("com.squareup.okhttp3:okhttp:5.0.0-alpha.3")
     implementation("org.yaml:snakeyaml:1.30")
+
+    // Local Shizuku tethering (io.nekohasekai.sagernet.localtether): privilege
+    // bootstrap via the separate Shizuku app, and hidden-API access for the
+    // TestNetworkManager/TetheringManager calls it ports from vhost/shizzi.
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
     implementation("com.github.daniel-stoneuk:material-about-library:3.2.0-rc01")
     implementation("com.jakewharton:process-phoenix:2.1.2")
     implementation("com.esotericsoftware:kryo:5.2.1")

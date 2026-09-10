@@ -197,6 +197,7 @@
     <!-- notification category -->
     <string name="service_vpn">VPN Service</string>
     <string name="service_proxy">Proxy Service</string>
+    <string name="service_tethering">Local Shizuku Tethering</string>
     <string name="forward_success">Proxy started.</string>
     <string name="invalid_server">Invalid server name</string>
     <string name="service_failed">Failed: </string>
@@ -251,6 +252,10 @@
     <string name="share_vpn_local_network_sum">Let other devices on your Wi-Fi/hotspot use this phone as a SOCKS5 proxy</string>
     <string name="local_proxy_info">Local proxy address</string>
     <string name="local_proxy_info_sum">Connect while \"Share VPN in local network\" is on and the VPN is connected</string>
+    <string name="local_shizuku_tether_category">Local Shizuku Tethering</string>
+    <string name="local_shizuku_tether">Local Shizuku tethering</string>
+    <string name="local_shizuku_tether_sum">Let hotspot clients use this phone\'s VPN transparently, no proxy setup needed on their end. Requires the separate Shizuku app.</string>
+    <string name="local_shizuku_tether_not_installed">Shizuku isn\'t installed or isn\'t running. Install it from shizuku.rikka.app, start it (via Wireless debugging pairing or ADB), then try again.</string>
     <string name="balancer">Balancer</string>
     <string name="balancer_settings">Balancer Settings</string>
     <string name="balancer_type">Type</string>
