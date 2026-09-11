@@ -253,6 +253,8 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     var localShizukuTetherEnabled by configurationStore.boolean(Key.LOCAL_SHIZUKU_TETHER_ENABLED)
 
+    var devOptionsSnapshot by configurationStore.string(Key.DEV_OPTIONS_SNAPSHOT) { "" }
+
     var lbSlotANetworkKind by profileCacheStore.stringToInt(Key.LB_SLOT_A_NETWORK_KIND)
     var lbSlotASubscriptionId by profileCacheStore.stringToInt(Key.LB_SLOT_A_SUBSCRIPTION_ID) { -1 }
     var lbSlotAProxyId by profileCacheStore.long(Key.LB_SLOT_A_PROXY_ID) { -1L }

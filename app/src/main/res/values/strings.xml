@@ -19,7 +19,7 @@
     <string name="quick_toggle">Toggle</string>
     <string name="quick_enable">Enable</string>
     <string name="quick_disable">Disable</string>
-    <string name="tile_title">Switcher</string>
+    <string name="tile_title">vload</string>
     <string name="menu_traffic">Traffic</string>
     <string name="menu_dashboard">sing-box Dashboard</string>
     <!-- externel -->
@@ -256,6 +256,22 @@
     <string name="local_shizuku_tether">Local Shizuku tethering</string>
     <string name="local_shizuku_tether_sum">Let hotspot clients use this phone\'s VPN transparently, no proxy setup needed on their end. Requires the separate Shizuku app.</string>
     <string name="local_shizuku_tether_not_installed">Shizuku isn\'t installed or isn\'t running. Install it from shizuku.rikka.app, start it (via Wireless debugging pairing or ADB), then try again.</string>
+    <string name="dev_options_tile_title">Dev</string>
+    <string name="dev_options_tile_failed">Something went wrong writing settings - try again</string>
+    <string name="dev_options_tile_needs_permission">One-time setup needed: run \"adb shell pm grant %1$s android.permission.WRITE_SECURE_SETTINGS\", then try again</string>
+    <string name="tether_tile_title">VLoad Tether</string>
+    <string name="tether_tile_unsupported_sdk">Local Shizuku tethering needs Android 13 or newer</string>
+    <string name="menu_tile_guide">Quick Tiles Setup</string>
+    <string name="tile_guide_title">Quick Tiles Setup</string>
+    <string name="tile_guide_dev_card_title">"Dev" tile</string>
+    <string name="tile_guide_dev_what">Snapshots Developer Options + related settings, then toggles them on/off in one tap - same idea as TogglDev.</string>
+    <string name="tile_guide_tether_card_title">"VLoad Tether" tile</string>
+    <string name="tile_guide_tether_what">One tap to turn on Developer Options + Wireless debugging and start local Shizuku tethering, sharing this phone\'s VPN with hotspot clients.</string>
+    <string name="tile_guide_permission_title">One-time setup on THIS phone</string>
+    <string name="tile_guide_permission_body">Both tiles need this permission granted once via adb - it can\'t be granted through a normal Android permission popup. Connect this phone to a computer over USB with USB debugging on, then run the command below. Tap it to copy.</string>
+    <string name="tile_guide_copied">Command copied - paste it into your adb/terminal window</string>
+    <string name="tile_guide_shizuku_title">Shizuku (VLoad Tether only)</string>
+    <string name="tile_guide_shizuku_body">VLoad Tether also needs the free Shizuku app installed and started (via its own "Wireless debugging" pairing) before every use - it doesn\'t survive a reboot on a non-rooted phone. Tap to open shizuku.rikka.app.</string>
     <string name="balancer">Balancer</string>
     <string name="balancer_settings">Balancer Settings</string>
     <string name="balancer_type">Type</string>

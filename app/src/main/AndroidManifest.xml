@@ -20,6 +20,16 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.EXPAND_STATUS_BAR" />
 
+    <!--
+    Not requestable through the normal runtime-permission dialog - granted
+    via a one-time `adb shell pm grant <applicationId>
+    android.permission.WRITE_SECURE_SETTINGS`, same as TogglDev documents for
+    its own equivalent feature. Used only by DevOptionsSettings.
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="PackageVisibilityPolicy" />
@@ -79,6 +89,34 @@
         <meta-data
             android:name="android.app.shortcuts"
             android:resource="@xml/shortcuts" />
+
+        <!--
+        rikka.shizuku.ShizukuProvider defaults to no process override (the
+        app's default process), which is why Shizuku's own daemon
+        (shizuku_server) proactively touching it - independent of anything
+        this app's code does - forces a cold start of the heavy default
+        process on every screen wake. tools:node="merge" failed to actually
+        collapse an override into it on three separate attempts (produced a
+        duplicate <provider> instead); tools:node="replace" is a different,
+        simpler merge strategy (full node substitution instead of
+        attribute-by-attribute reconciliation) - re-specifying every
+        attribute the library's own declaration has, plus android:process,
+        moves it to the same lightweight process both tiles use. A
+        ContentProvider is reachable cross-process via normal Binder IPC
+        regardless of which process hosts it, so this doesn't change how any
+        caller (TetherTileService, or LocalShizukuTether from the Settings
+        screen in the default process) talks to Shizuku.
+        -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:process=":tiles"
+            tools:node="replace" />
+
 
         <activity
             android:name="io.nekohasekai.sagernet.ui.BlankActivity"
@@ -312,11 +350,54 @@
             android:name="io.nekohasekai.sagernet.bg.TileService"
             android:exported="true"
             android:foregroundServiceType="systemExempted"
-            android:icon="@drawable/ic_service_active"
+            android:icon="@drawable/ic_tile_vload"
             android:label="@string/tile_title"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
             android:process=":bg"
             tools:ignore="ForegroundServicePermission"
+            tools:targetApi="n">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
+
+        <!--
+        Own process (":tiles"), not the default one and not ":bg" -
+        SagerNet.onCreate() only pays for the heavy native VPN core init
+        (Libcore.initCore: loads the Go/sing-box native library) when
+        isMainProcess or isBgProcess is true, so a cold start of THIS process
+        skips it entirely. Both tiles only touch the Settings provider, a
+        Room-backed DataStore (a real SQLite file, safe to open from any
+        process), and Shizuku - reachable here too now that ShizukuProvider
+        itself is also pinned to this process (see the <provider> override
+        near the top of <application>).
+        -->
+        <service
+            android:name="io.nekohasekai.sagernet.bg.DevOptionsTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_device_developer_mode"
+            android:label="@string/dev_options_tile_title"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:process=":tiles"
+            tools:targetApi="n">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
+
+        <service
+            android:name="io.nekohasekai.sagernet.bg.TetherTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_hardware_router"
+            android:label="@string/tether_tile_title"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:process=":tiles"
             tools:targetApi="n">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />

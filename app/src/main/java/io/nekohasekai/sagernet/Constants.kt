@@ -136,6 +136,8 @@ object Key {
 
     const val LOCAL_SHIZUKU_TETHER_ENABLED = "localShizukuTetherEnabled"
 
+    const val DEV_OPTIONS_SNAPSHOT = "devOptionsSnapshot"
+
     const val LB_SLOT_A_NETWORK_KIND = "lbSlotANetworkKind"
     const val LB_SLOT_A_SUBSCRIPTION_ID = "lbSlotASubscriptionId"
     const val LB_SLOT_A_PROXY_ID = "lbSlotAProxyId"

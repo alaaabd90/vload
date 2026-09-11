@@ -7,6 +7,14 @@ import android.content.Context
  *
  * stopTethering lands asynchronously, so a single immediate read can still see
  * the downstream up. See https://github.com/carlelieser/shizzi/issues/22
+ *
+ * Polls findTethered() rather than sleeping a fixed amount before checking
+ * once: stop() itself no longer blocks for a settle period (see
+ * DownstreamControl.stopWifiTethering), so returning as soon as release is
+ * actually observed - typically well under a second - replaces what used to
+ * be a flat 3s of dead time on every single attempt, whether the hotspot had
+ * already released or not. The per-attempt ceiling (DOWNSTREAM_POLL_WINDOW_MS)
+ * keeps the worst case bounded the same way the old fixed sleep did.
  */
 fun releaseDownstreamWith(
     stop: () -> Boolean,
@@ -18,7 +26,13 @@ fun releaseDownstreamWith(
     for (attempt in 1..DOWNSTREAM_STOP_ATTEMPTS) {
         didAccept = stop() || didAccept
 
-        val stillTethered = findTethered()
+        val deadline = System.currentTimeMillis() + DOWNSTREAM_POLL_WINDOW_MS
+        var stillTethered = findTethered()
+        while (stillTethered != null && System.currentTimeMillis() < deadline) {
+            Thread.sleep(DOWNSTREAM_POLL_INTERVAL_MS)
+            stillTethered = findTethered()
+        }
+
         if (stillTethered == null) {
             return when {
                 didAccept -> null
@@ -33,6 +47,8 @@ fun releaseDownstreamWith(
 }
 
 const val DOWNSTREAM_STOP_ATTEMPTS = 3
+const val DOWNSTREAM_POLL_INTERVAL_MS = 250L
+const val DOWNSTREAM_POLL_WINDOW_MS = 3_000L
 
 class SessionTeardown(private val context: Context) {
 

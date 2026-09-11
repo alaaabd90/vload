@@ -350,6 +350,7 @@ class MainActivity : ThemedActivity(),
                 return false
             }
 
+            R.id.nav_tile_guide -> displayFragment(TileSetupGuideFragment())
             R.id.nav_about -> displayFragment(AboutFragment())
             R.id.nav_tuiguang -> {
                 launchCustomTab("https://neko-box.pages.dev/喵")

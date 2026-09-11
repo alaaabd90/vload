@@ -52,6 +52,7 @@ object LocalShizukuTether {
         data object CheckingCompatibility : State
         data object Starting : State
         data object Running : State
+        data object Stopping : State
         data class Incompatible(val results: List<CapabilityResult>) : State
         data class Error(val message: String) : State
     }
@@ -59,6 +60,11 @@ object LocalShizukuTether {
     private const val PERMISSION_REQUEST_CODE = 41829
     private const val PERMISSION_TIMEOUT_MS = 60_000L
     private const val BIND_TIMEOUT_MS = 15_000L
+
+    // Shorter than BIND_TIMEOUT_MS: reconcile() runs opportunistically
+    // whenever a tile becomes visible, not in response to a user action, so
+    // it shouldn't make the caller wait long if the helper is unreachable.
+    private const val RECONCILE_BIND_TIMEOUT_MS = 3_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val opMutex = Mutex()
@@ -104,6 +110,55 @@ object LocalShizukuTether {
     fun isRunning(): Boolean = localState.value == State.Running
 
     /**
+     * Re-syncs localState with the real privileged-helper status, so a
+     * process that never itself started the session (most commonly: this
+     * app's hosting process was killed and restarted since the session was
+     * started from a *different* process instance - routine on aggressive
+     * OEM battery managers) doesn't sit there showing a stale Idle default
+     * while a real session is actually running. Without this, a QS tile in a
+     * freshly-restarted process would show "off", and tapping it would run
+     * the *start* path against an already-running session instead of
+     * stopping it - "sometimes works, sometimes doesn't" with repeated
+     * toggling was this: which path got taken depended entirely on whether
+     * the process happened to still be alive from the last tap.
+     *
+     * Safe to call anytime - e.g. every time a QS tile becomes visible. Never
+     * requests Shizuku's permission dialog on its own (a background status
+     * check popping a permission prompt would be a bad surprise); if Shizuku
+     * isn't available/authorized yet, or nothing is actually running, it
+     * just leaves localState alone.
+     */
+    fun reconcile() {
+        scope.launch {
+            opMutex.withLock { doReconcile() }
+        }
+    }
+
+    private suspend fun doReconcile() {
+        if (client != null) return // this process already has a live connection; state is current
+        if (localState.value !is State.Idle) return // mid-operation already; don't interfere
+        if (!isShizukuAvailable() || !hasPermission()) return
+
+        val binder = withTimeoutOrNull(RECONCILE_BIND_TIMEOUT_MS) { bindSuspend() }
+        if (binder == null) return // nothing reachable - leave as Idle
+
+        val freshClient = TetherClient(ITetherService.Stub.asInterface(binder))
+        val sessionActive = runCatching { freshClient.status() }
+            .getOrNull()
+            ?.let { runCatching { org.json.JSONObject(it).optString("state") }.getOrNull() } == "ACTIVE"
+
+        if (sessionActive) {
+            client = freshClient
+            localState.value = State.Running
+        } else {
+            // Nothing genuinely active - this reconnect only existed to ask;
+            // no reason to keep the helper process alive for it.
+            connection?.let { runCatching { Shizuku.unbindUserService(userServiceArgs, it, true) } }
+            connection = null
+        }
+    }
+
+    /**
      * Starts the whole sequence: request permission if needed, bind the
      * privileged TetherService, check compatibility, then start tethering.
      * Safe to call when Shizuku isn't installed/running — logs and reports
@@ -116,8 +171,16 @@ object LocalShizukuTether {
         }
     }
 
-    /** Stops the tethering session and unbinds from Shizuku. Safe to call even if never started. */
+    /**
+     * Stops the tethering session and unbinds from Shizuku. Safe to call even
+     * if never started. Flips to State.Stopping immediately (ahead of the
+     * mutex/coroutine dispatch) so a listener like a QS tile can show a busy
+     * state right away instead of sitting on State.Running for as long as the
+     * actual teardown's retry-and-verify loop takes (up to ~9s - see
+     * SessionTeardown.releaseDownstreamWith).
+     */
     fun stopShared() {
+        if (localState.value == State.Running) localState.value = State.Stopping
         scope.launch {
             opMutex.withLock { doStop() }
         }
@@ -250,14 +313,42 @@ object LocalShizukuTether {
         pendingPermissionResult?.complete(false)
         pendingPermissionResult = null
 
+        // client/connection are process-local, but the privileged helper
+        // process Shizuku launched is not - if this app's hosting process
+        // was killed and restarted since the session was started (this is
+        // routine on aggressive OEM battery managers), a fresh process has
+        // no memory of it at all, even though the helper - and the real
+        // hotspot it's driving - may well still be running. Reconnecting
+        // here isn't optional: Shizuku.bindUserService rebinds to an
+        // already-running daemon matching these UserServiceArgs rather than
+        // spawning a new one, so this is how a fresh process finds the real
+        // session instead of silently concluding "nothing to stop" and
+        // leaving an orphaned helper (and hotspot) running forever.
+        if (client == null) {
+            val binder = withTimeoutOrNull(BIND_TIMEOUT_MS) { bindSuspend() }
+            if (binder != null) {
+                client = TetherClient(ITetherService.Stub.asInterface(binder))
+            }
+        }
+
         val bound = client
         val conn = connection
         client = null
         connection = null
 
-        if (bound != null) {
+        // bound.stop()'s JSON result (see TetherSession.status()) is the only
+        // way to know whether the downstream (the actual hotspot radio)
+        // really released - it retries internally for up to ~9s before
+        // giving up and reporting state=ERROR. Previously this result was
+        // discarded entirely and localState was forced to Idle regardless,
+        // so a failed teardown looked identical to a real one: the tile/
+        // Settings switch showed "off" while the hotspot stayed connected.
+        val stopResult = if (bound != null) {
             runCatching { bound.stop() }
                 .onFailure { failure -> SessionLog.warn("stop failed: ${failure.message}") }
+                .getOrNull()
+        } else {
+            null
         }
 
         if (conn != null) {
@@ -265,7 +356,36 @@ object LocalShizukuTether {
                 .onFailure { failure -> SessionLog.warn("unbindUserService failed: ${failure.message}") }
         }
 
-        localState.value = State.Idle
-        SessionLog.info("stopped")
+        val teardownError = parseTeardownError(stopResult, hadBoundClient = bound != null)
+        if (teardownError != null) {
+            SessionLog.error("teardown incomplete: $teardownError")
+            localState.value = State.Error(teardownError)
+        } else {
+            localState.value = State.Idle
+            SessionLog.info("stopped")
+        }
+    }
+
+    /**
+     * Null means the downstream is confirmed released (or there was nothing
+     * bound to begin with, so nothing to release). Non-null is the reason it
+     * isn't confirmed released - either the session itself reported
+     * state=ERROR, or the stop() call couldn't be reached/parsed at all, in
+     * which case the real hotspot state is simply unknown rather than
+     * assumed fine.
+     */
+    private fun parseTeardownError(stopResult: String?, hadBoundClient: Boolean): String? {
+        if (!hadBoundClient) return null
+        if (stopResult == null) return "could not reach the privileged helper to confirm the hotspot released"
+
+        return runCatching {
+            val json = org.json.JSONObject(stopResult)
+            val state = json.optString("state")
+            if (state == "ERROR") {
+                json.optString("detail").ifEmpty { "downstream did not confirm release" }
+            } else {
+                null
+            }
+        }.getOrElse { "could not parse stop result: $stopResult" }
     }
 }

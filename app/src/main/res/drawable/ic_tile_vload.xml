@@ -1,0 +1,22 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+        android:width="24dp"
+        android:height="24dp"
+        android:viewportWidth="24"
+        android:viewportHeight="24">
+    <!-- vload's "V" mark (two rounded bars meeting in a checkmark shape,
+         matching mipmap/ic_launcher_foreground), used for the main VPN
+         on/off QS tile - deliberately its own drawable, not shared with
+         ic_service_idle/busy (those are load-bearing AnimatedVectorDrawable
+         bases for ServiceButton's connect/disconnect animation, which
+         targets their paths by name - reusing them here for the tile
+         crashed MainActivity.onCreate() with "Target ... cannot be found",
+         since a shared, differently-shaped replacement has no path named
+         "strike_thru_path" etc. for those animations to find). -->
+    <path
+        android:pathData="M5,4 L12,17 M19,4 L12,17"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="@android:color/transparent"/>
+</vector>

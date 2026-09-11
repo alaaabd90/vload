@@ -48,10 +48,17 @@ class DownstreamControl(private val context: Context) {
 
     private val wifiTetheringType = 0
 
+    // No settle delay here - stopTethering() lands asynchronously regardless,
+    // so blocking a fixed amount here just delays the caller without buying
+    // any extra certainty. releaseDownstreamWith (SessionTeardown.kt) polls
+    // the actual downstream state afterward instead, which returns as soon
+    // as release is confirmed rather than always waiting the same amount
+    // whether it's needed or not - that used to be a flat 3s of dead time on
+    // every single "off" tap, even when the hotspot released almost
+    // immediately.
     fun stopWifiTethering(): Boolean = runCatching {
         val method = managerClass.getMethod("stopTethering", Int::class.javaPrimitiveType)
         method.invoke(tetheringManager, wifiTetheringType)
-        Thread.sleep(STOP_SETTLE_MS)
     }.isSuccess
 
     fun startWifiTethering(): Pair<Boolean, String> {
@@ -179,7 +186,6 @@ class DownstreamControl(private val context: Context) {
 
     private companion object {
         const val SUCCESS = "onTetheringStarted"
-        const val STOP_SETTLE_MS = 3_000L
         const val START_TIMEOUT_MS = 15_000L
     }
 }

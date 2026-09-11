@@ -11,10 +11,15 @@ import android.service.quicksettings.TileService as BaseTileService
 
 @RequiresApi(24)
 class TileService : BaseTileService(), SagerConnection.Callback {
-    private val iconIdle by lazy { Icon.createWithResource(this, R.drawable.ic_service_idle) }
-    private val iconBusy by lazy { Icon.createWithResource(this, R.drawable.ic_service_busy) }
+    // ic_tile_vload, not ic_service_idle/busy/active: those three are also
+    // AnimatedVectorDrawable bases for ServiceButton's connect/disconnect
+    // animation (targeted by specific path names), so reusing them for a
+    // differently-shaped tile icon crashes MainActivity.onCreate() the
+    // moment it tries to animate a path name that no longer exists.
+    private val iconIdle by lazy { Icon.createWithResource(this, R.drawable.ic_tile_vload) }
+    private val iconBusy by lazy { Icon.createWithResource(this, R.drawable.ic_tile_vload) }
     private val iconConnected by lazy {
-        Icon.createWithResource(this, R.drawable.ic_service_active)
+        Icon.createWithResource(this, R.drawable.ic_tile_vload)
     }
     private var tapPending = false
 
