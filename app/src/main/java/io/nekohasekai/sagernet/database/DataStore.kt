@@ -220,6 +220,12 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var serverConnectionReceiveWindow by profileCacheStore.stringToIntIfExists(Key.SERVER_CONNECTION_RECEIVE_WINDOW)
     var serverDisableMtuDiscovery by profileCacheStore.boolean(Key.SERVER_DISABLE_MTU_DISCOVERY)
     var serverHopInterval by profileCacheStore.stringToInt(Key.SERVER_HOP_INTERVAL) { 10 }
+    var serverHopIntervalMax by profileCacheStore.stringToInt(Key.SERVER_HOP_INTERVAL_MAX)
+    var serverBbrProfile by profileCacheStore.string(Key.SERVER_BBR_PROFILE)
+    var serverDisableChromeParrot by profileCacheStore.boolean(Key.SERVER_DISABLE_CHROME_PARROT)
+    var serverObfsType by profileCacheStore.string(Key.SERVER_OBFS_TYPE) { "salamander" }
+    var serverObfsGeckoMinPacketSize by profileCacheStore.stringToInt(Key.SERVER_OBFS_GECKO_MIN_PACKET_SIZE)
+    var serverObfsGeckoMaxPacketSize by profileCacheStore.stringToInt(Key.SERVER_OBFS_GECKO_MAX_PACKET_SIZE)
 
     var protocolVersion by profileCacheStore.stringToInt(Key.PROTOCOL_VERSION) { 2 } // default is SOCKS5
 

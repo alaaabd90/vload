@@ -35,6 +35,12 @@ class HysteriaSettingsActivity : ProfileSettingsActivity<HysteriaBean>() {
         DataStore.serverConnectionReceiveWindow = connectionReceiveWindow
         DataStore.serverDisableMtuDiscovery = disableMtuDiscovery
         DataStore.serverHopInterval = hopInterval
+        DataStore.serverHopIntervalMax = hopIntervalMax
+        DataStore.serverBbrProfile = bbrProfile
+        DataStore.serverDisableChromeParrot = disableChromeParrot
+        DataStore.serverObfsType = obfsType
+        DataStore.serverObfsGeckoMinPacketSize = obfsGeckoMinPacketSize
+        DataStore.serverObfsGeckoMaxPacketSize = obfsGeckoMaxPacketSize
     }
 
     override fun HysteriaBean.serialize() {
@@ -56,6 +62,12 @@ class HysteriaSettingsActivity : ProfileSettingsActivity<HysteriaBean>() {
         connectionReceiveWindow = DataStore.serverConnectionReceiveWindow
         disableMtuDiscovery = DataStore.serverDisableMtuDiscovery
         hopInterval = DataStore.serverHopInterval
+        hopIntervalMax = DataStore.serverHopIntervalMax
+        bbrProfile = DataStore.serverBbrProfile
+        disableChromeParrot = DataStore.serverDisableChromeParrot
+        obfsType = DataStore.serverObfsType
+        obfsGeckoMinPacketSize = DataStore.serverObfsGeckoMinPacketSize
+        obfsGeckoMaxPacketSize = DataStore.serverObfsGeckoMaxPacketSize
     }
 
     override fun PreferenceFragmentCompat.createPreferences(
@@ -75,6 +87,25 @@ class HysteriaSettingsActivity : ProfileSettingsActivity<HysteriaBean>() {
         val protocol = findPreference<SimpleMenuPreference>(Key.SERVER_PROTOCOL)!!
         val alpn = findPreference<EditTextPreference>(Key.SERVER_ALPN)!!
 
+        val hopIntervalMax = findPreference<EditTextPreference>(Key.SERVER_HOP_INTERVAL_MAX)!!
+        val obfsType = findPreference<SimpleMenuPreference>(Key.SERVER_OBFS_TYPE)!!
+        val obfsGeckoMin = findPreference<EditTextPreference>(Key.SERVER_OBFS_GECKO_MIN_PACKET_SIZE)!!
+        val obfsGeckoMax = findPreference<EditTextPreference>(Key.SERVER_OBFS_GECKO_MAX_PACKET_SIZE)!!
+        val bbrProfile = findPreference<SimpleMenuPreference>(Key.SERVER_BBR_PROFILE)!!
+        val disableChromeParrot = findPreference<SwitchPreference>(Key.SERVER_DISABLE_CHROME_PARROT)!!
+
+        fun updateObfsType(type: String?) {
+            val isGecko = type == "gecko"
+            findPreference<EditTextPreference>(Key.SERVER_OBFS)!!.isVisible = !isGecko
+            obfsGeckoMin.isVisible = isGecko
+            obfsGeckoMax.isVisible = isGecko
+        }
+        updateObfsType(obfsType.value)
+        obfsType.setOnPreferenceChangeListener { _, newValue ->
+            updateObfsType(newValue as String)
+            true
+        }
+
         fun updateVersion(v: Int) {
             if (v == 2) {
                 authPayload.isVisible = true
@@ -91,6 +122,12 @@ class HysteriaSettingsActivity : ProfileSettingsActivity<HysteriaBean>() {
                     false
                 //
                 authPayload.title = resources.getString(R.string.password)
+                //
+                hopIntervalMax.isVisible = true
+                obfsType.isVisible = true
+                bbrProfile.isVisible = true
+                disableChromeParrot.isVisible = true
+                updateObfsType(obfsType.value)
             } else {
                 authType.isVisible = true
                 authPayload.isVisible = true
@@ -105,6 +142,13 @@ class HysteriaSettingsActivity : ProfileSettingsActivity<HysteriaBean>() {
                     true
                 //
                 authPayload.title = resources.getString(R.string.hysteria_auth_payload)
+                //
+                hopIntervalMax.isVisible = false
+                obfsType.isVisible = false
+                obfsGeckoMin.isVisible = false
+                obfsGeckoMax.isVisible = false
+                bbrProfile.isVisible = false
+                disableChromeParrot.isVisible = false
             }
         }
         findPreference<SimpleMenuPreference>(Key.PROTOCOL_VERSION)!!.setOnPreferenceChangeListener { _, newValue ->
@@ -136,6 +180,9 @@ class HysteriaSettingsActivity : ProfileSettingsActivity<HysteriaBean>() {
         findPreference<EditTextPreference>(Key.SERVER_HOP_INTERVAL)!!.apply {
             setOnBindEditTextListener(EditTextPreferenceModifiers.Number)
         }
+        hopIntervalMax.setOnBindEditTextListener(EditTextPreferenceModifiers.Number)
+        obfsGeckoMin.setOnBindEditTextListener(EditTextPreferenceModifiers.Number)
+        obfsGeckoMax.setOnBindEditTextListener(EditTextPreferenceModifiers.Number)
     }
 
 }

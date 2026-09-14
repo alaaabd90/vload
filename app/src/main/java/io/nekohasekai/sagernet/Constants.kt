@@ -112,6 +112,12 @@ object Key {
     const val SERVER_CONNECTION_RECEIVE_WINDOW = "serverConnectionReceiveWindow"
     const val SERVER_DISABLE_MTU_DISCOVERY = "serverDisableMtuDiscovery"
     const val SERVER_HOP_INTERVAL = "hopInterval"
+    const val SERVER_HOP_INTERVAL_MAX = "hopIntervalMax"
+    const val SERVER_BBR_PROFILE = "bbrProfile"
+    const val SERVER_DISABLE_CHROME_PARROT = "disableChromeParrot"
+    const val SERVER_OBFS_TYPE = "obfsType"
+    const val SERVER_OBFS_GECKO_MIN_PACKET_SIZE = "obfsGeckoMinPacketSize"
+    const val SERVER_OBFS_GECKO_MAX_PACKET_SIZE = "obfsGeckoMaxPacketSize"
 
     const val SERVER_PRIVATE_KEY = "serverPrivateKey"
     const val SERVER_INSECURE_CONCURRENCY = "serverInsecureConcurrency"
