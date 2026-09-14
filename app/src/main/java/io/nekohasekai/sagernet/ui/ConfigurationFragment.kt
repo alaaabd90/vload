@@ -373,6 +373,15 @@ class ConfigurationFragment @JvmOverloads constructor(
                 ProfileManager.updateProfile(profile)
             }
         }
+        // vload: the per-item ProfileManager.onAdd notification above only
+        // reaches the target group's list adapter if it's still alive and
+        // registered at this exact moment - after returning from the
+        // system file picker (a separate app/process), that's not always
+        // true, so newly imported profiles could silently fail to appear
+        // until the app was restarted. Force a full reload as a reliable
+        // fallback, the same mechanism bulk operations elsewhere already
+        // use (see GroupManager.postReload call sites).
+        GroupManager.postReload(targetId)
         onMainDispatcher {
             DataStore.editingGroup = targetId
             snackbar(

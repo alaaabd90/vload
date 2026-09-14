@@ -22,6 +22,7 @@ import com.king.zxing.util.LogUtils
 import com.king.zxing.util.PermissionUtils
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.GroupManager
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.databinding.LayoutScannerBinding
 import io.nekohasekai.sagernet.group.RawUpdater
@@ -130,6 +131,13 @@ class ScannerActivity : ThemedActivity(),
                         ProfileManager.createProfile(currentGroupId, profile)
                         importedN.addAndGet(1)
                     }
+                    // vload: this activity already called finish() above
+                    // before this coroutine even started, so MainActivity's
+                    // profile list adapter may not be (re)registered as a
+                    // ProfileManager.Listener yet when onAdd fires here -
+                    // force a full reload as a reliable fallback (same
+                    // mechanism used for bulk operations elsewhere).
+                    GroupManager.postReload(currentGroupId)
                 } else {
                     onMainDispatcher {
                         Toast.makeText(app, R.string.action_import_err, Toast.LENGTH_SHORT).show()
