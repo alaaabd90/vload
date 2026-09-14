@@ -19,16 +19,19 @@ import (
 	"github.com/sagernet/sing-box/protocol/group"
 
 	box "github.com/sagernet/sing-box"
-	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/pause"
 )
 
-func init() {
-	dialer.DoNotSelectInterface = true
-}
+// Package-level dialer.DoNotSelectInterface was removed upstream in
+// sing-box 1.14.0 (its own network-strategy interface selection is now
+// only ever enabled when a config explicitly sets network_strategy/
+// network_type - see common/dialer/default.go). vload's own outbounds
+// never set those, and instead pick interfaces via each weighted-outbound
+// member's own bind_interface, so nothing here needs to force that off
+// any more - it's already off by default.
 
 var mainInstance *BoxInstance
 
@@ -91,6 +94,7 @@ func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *Box
 	ctx = box.Context(ctx,
 		nekoboxAndroidInboundRegistry(), nekoboxAndroidOutboundRegistry(), nekoboxAndroidEndpointRegistry(),
 		nekoboxAndroidDNSTransportRegistry(localTransport), nekoboxAndroidServiceRegistry(),
+		nekoboxAndroidCertificateProviderRegistry(),
 	)
 	ctx = service.ContextWithDefaultRegistry(ctx)
 	service.MustRegister[adapter.PlatformInterface](ctx, boxPlatformInterfaceInstance)
