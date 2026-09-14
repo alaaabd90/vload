@@ -259,7 +259,18 @@ class BaseService {
                 data.connectingJob?.cancelAndJoin() // ensure stop connecting first
                 // we use a coroutineScope here to allow clean-up in parallel
                 coroutineScope {
-                    killProcesses()
+                    // vload: killProcesses() -> ProxyInstance.close() runs a
+                    // runBlocking{} internally (flushing traffic stats to
+                    // the DB, then broadcasting to every bound UI client) -
+                    // that was executing right here on the main dispatcher,
+                    // so a slow DB write or a stale/blocked binder callback
+                    // could freeze all UI input long enough to ANR on every
+                    // single VPN stop/reload. Run it on a background
+                    // dispatcher instead - still awaited before the rest of
+                    // shutdown proceeds, just off the main thread.
+                    withContext(Dispatchers.IO) {
+                        killProcesses()
+                    }
                     val data = data
                     if (data.closeReceiverRegistered) {
                         unregisterReceiver(data.receiver)
