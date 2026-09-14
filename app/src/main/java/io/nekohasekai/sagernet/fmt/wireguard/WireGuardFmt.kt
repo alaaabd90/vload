@@ -38,6 +38,10 @@ fun buildSingBoxEndpointWireguardBean(bean: WireGuardBean): SingBoxOptions.Endpo
             public_key = bean.peerPublicKey
             if (bean.peerPreSharedKey.isNotBlank()) pre_shared_key = bean.peerPreSharedKey
             if (bean.reserved.isNotBlank()) reserved = genReserved(bean.reserved)
+            // vload only ever configures a single implicit peer (no per-peer
+            // routing UI), so route all traffic to it - matches the old
+            // single-peer outbound's implicit behavior exactly.
+            allowed_ips = listOf("0.0.0.0/0", "::/0")
         })
     }
 }

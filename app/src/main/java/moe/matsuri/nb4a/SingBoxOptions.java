@@ -4747,6 +4747,12 @@ public class SingBoxOptions {
 
         public String domain_strategy;
 
+        // vload: required whenever `server` below is a domain, not an IP -
+        // sing-box 1.14.0 endpoints (unlike outbounds) resolve their own
+        // server address at creation time and fail immediately without this
+        // ("missing domain resolver for domain server address").
+        public DNSDomainResolverOptions domain_resolver;
+
         public String server;
 
         public Integer server_port;
@@ -4826,6 +4832,10 @@ public class SingBoxOptions {
         public Boolean tcp_fast_open;
 
         public String domain_strategy;
+
+        // vload: required whenever `server` below is a domain, not an IP -
+        // see the identical comment on Endpoint_OpenVPNOptions.
+        public DNSDomainResolverOptions domain_resolver;
 
         public String server;
 
