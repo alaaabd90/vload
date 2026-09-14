@@ -1,0 +1,70 @@
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <EditTextPreference
+        app:icon="@drawable/ic_social_emoji_symbols"
+        app:key="name"
+        app:title="@string/profile_name"
+        app:useSimpleSummaryProvider="true" />
+
+    <PreferenceCategory app:title="@string/proxy_cat">
+        <EditTextPreference
+            app:icon="@drawable/ic_hardware_router"
+            app:key="serverAddress"
+            app:title="@string/server_address"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:icon="@drawable/ic_maps_directions_boat"
+            app:key="serverPort"
+            app:title="@string/server_port"
+            app:useSimpleSummaryProvider="true" />
+        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+            app:defaultValue="4"
+            app:entries="@array/snell_version"
+            app:entryValues="@array/snell_version"
+            app:icon="@drawable/ic_baseline_update_24"
+            app:key="version"
+            app:title="Version"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:icon="@drawable/ic_settings_password"
+            app:key="psk"
+            app:title="PSK" />
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_vpn_key_24"
+            app:key="userkey"
+            app:title="User Key"
+            app:summary="Optional, for multi-user PSK setups" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="@string/security_settings">
+        <SwitchPreference
+            app:icon="@drawable/ic_baseline_compare_arrows_24"
+            app:key="reuse"
+            app:title="Reuse connection"
+            app:summary="Multiplex requests over one TCP connection" />
+        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+            app:defaultValue="none"
+            app:entries="@array/snell_obfs_mode"
+            app:entryValues="@array/snell_obfs_mode"
+            app:icon="@drawable/ic_baseline_legend_toggle_24"
+            app:key="obfsMode"
+            app:title="Obfs Mode"
+            app:summary="version 4 only"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:icon="@drawable/ic_action_copyright"
+            app:key="obfsHost"
+            app:title="Obfs Host"
+            app:useSimpleSummaryProvider="true" />
+        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+            app:defaultValue="default"
+            app:entries="@array/snell_v6_mode"
+            app:entryValues="@array/snell_v6_mode"
+            app:icon="@drawable/ic_baseline_update_24"
+            app:key="v6Mode"
+            app:title="V6 Mode"
+            app:summary="version 6 only"
+            app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
+</PreferenceScreen>

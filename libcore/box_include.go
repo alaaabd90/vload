@@ -26,9 +26,12 @@ import (
 	"github.com/sagernet/sing-box/protocol/hysteria"
 	"github.com/sagernet/sing-box/protocol/hysteria2"
 	"github.com/sagernet/sing-box/protocol/mixed"
+	"github.com/sagernet/sing-box/protocol/openconnect"
+	"github.com/sagernet/sing-box/protocol/openvpn"
 	"github.com/sagernet/sing-box/protocol/redirect"
 	"github.com/sagernet/sing-box/protocol/shadowsocks"
 	"github.com/sagernet/sing-box/protocol/shadowtls"
+	"github.com/sagernet/sing-box/protocol/snell"
 	"github.com/sagernet/sing-box/protocol/socks"
 	"github.com/sagernet/sing-box/protocol/ssh"
 	"github.com/sagernet/sing-box/protocol/tor"
@@ -84,6 +87,7 @@ func nekoboxAndroidOutboundRegistry() *outbound.Registry {
 	hysteria.RegisterOutbound(registry)
 	tuic.RegisterOutbound(registry)
 	hysteria2.RegisterOutbound(registry)
+	snell.RegisterOutbound(registry)
 
 	return registry
 }
@@ -92,6 +96,11 @@ func nekoboxAndroidEndpointRegistry() *endpoint.Registry {
 	registry := endpoint.NewRegistry()
 
 	wireguard.RegisterEndpoint(registry)
+	// vload: OpenVPN/OpenConnect are endpoint-based in sing-box 1.14.0
+	// (they own a persistent tunnel interface), same as WireGuard - not
+	// registered as regular outbounds.
+	openvpn.RegisterEndpoint(registry)
+	openconnect.RegisterEndpoint(registry)
 
 	return registry
 }

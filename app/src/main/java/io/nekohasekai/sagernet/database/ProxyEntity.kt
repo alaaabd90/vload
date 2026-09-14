@@ -39,7 +39,13 @@ import moe.matsuri.nb4a.proxy.anytls.toUri
 import moe.matsuri.nb4a.proxy.config.ConfigBean
 import moe.matsuri.nb4a.proxy.config.ConfigSettingActivity
 import moe.matsuri.nb4a.proxy.neko.*
+import moe.matsuri.nb4a.proxy.openconnect.OpenConnectBean
+import moe.matsuri.nb4a.proxy.openconnect.OpenConnectSettingsActivity
+import moe.matsuri.nb4a.proxy.openvpn.OpenVPNBean
+import moe.matsuri.nb4a.proxy.openvpn.OpenVPNSettingsActivity
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSSettingsActivity
+import moe.matsuri.nb4a.proxy.snell.SnellBean
+import moe.matsuri.nb4a.proxy.snell.SnellSettingsActivity
 
 @Entity(
     tableName = "proxy_entities", indices = [Index("groupId", name = "groupId")]
@@ -73,6 +79,9 @@ data class ProxyEntity(
     var nekoBean: NekoBean? = null,
     var configBean: ConfigBean? = null,
     var loadBalanceBean: LoadBalanceBean? = null,
+    var snellBean: SnellBean? = null,
+    var openVPNBean: OpenVPNBean? = null,
+    var openConnectBean: OpenConnectBean? = null,
     @ColumnInfo(defaultValue = "0") var lockedImport: Boolean = false,
 ) : Serializable() {
 
@@ -99,6 +108,9 @@ data class ProxyEntity(
 
         const val TYPE_CHAIN = 8
         const val TYPE_LOAD_BALANCE = 23
+        const val TYPE_SNELL = 24
+        const val TYPE_OPENVPN = 25
+        const val TYPE_OPENCONNECT = 26
 
         val chainName by lazy { app.getString(R.string.proxy_chain) }
         val loadBalanceName by lazy { app.getString(R.string.action_load_balance) }
@@ -183,6 +195,9 @@ data class ProxyEntity(
             TYPE_NEKO -> nekoBean = KryoConverters.nekoDeserialize(byteArray)
             TYPE_CONFIG -> configBean = KryoConverters.configDeserialize(byteArray)
             TYPE_LOAD_BALANCE -> loadBalanceBean = KryoConverters.loadBalanceDeserialize(byteArray)
+            TYPE_SNELL -> snellBean = KryoConverters.snellDeserialize(byteArray)
+            TYPE_OPENVPN -> openVPNBean = KryoConverters.openVPNDeserialize(byteArray)
+            TYPE_OPENCONNECT -> openConnectBean = KryoConverters.openConnectDeserialize(byteArray)
         }
     }
 
@@ -205,6 +220,9 @@ data class ProxyEntity(
         TYPE_NEKO -> nekoBean!!.displayType()
         TYPE_CONFIG -> configBean!!.displayType()
         TYPE_LOAD_BALANCE -> loadBalanceName
+        TYPE_SNELL -> "Snell"
+        TYPE_OPENVPN -> "OpenVPN"
+        TYPE_OPENCONNECT -> "OpenConnect"
         else -> "Undefined type $type"
     }
 
@@ -231,6 +249,9 @@ data class ProxyEntity(
             TYPE_NEKO -> nekoBean
             TYPE_CONFIG -> configBean
             TYPE_LOAD_BALANCE -> loadBalanceBean
+            TYPE_SNELL -> snellBean
+            TYPE_OPENVPN -> openVPNBean
+            TYPE_OPENCONNECT -> openConnectBean
             else -> error("Undefined type $type")
         } ?: error("Null ${displayType()} profile")
     }
@@ -251,6 +272,9 @@ data class ProxyEntity(
             is NekoBean -> false
             is ConfigBean -> false
             is LoadBalanceBean -> false
+            is SnellBean -> false
+            is OpenVPNBean -> false
+            is OpenConnectBean -> false
             else -> true
         }
     }
@@ -472,6 +496,21 @@ data class ProxyEntity(
                 loadBalanceBean = bean
             }
 
+            is SnellBean -> {
+                type = TYPE_SNELL
+                snellBean = bean
+            }
+
+            is OpenVPNBean -> {
+                type = TYPE_OPENVPN
+                openVPNBean = bean
+            }
+
+            is OpenConnectBean -> {
+                type = TYPE_OPENCONNECT
+                openConnectBean = bean
+            }
+
             else -> error("Undefined type $type")
         }
         return this
@@ -497,6 +536,9 @@ data class ProxyEntity(
                 TYPE_CHAIN -> ChainSettingsActivity::class.java
                 TYPE_CONFIG -> ConfigSettingActivity::class.java
                 TYPE_LOAD_BALANCE -> LoadBalanceSettingsActivity::class.java
+                TYPE_SNELL -> SnellSettingsActivity::class.java
+                TYPE_OPENVPN -> OpenVPNSettingsActivity::class.java
+                TYPE_OPENCONNECT -> OpenConnectSettingsActivity::class.java
                 else -> throw IllegalArgumentException()
             }
         ).apply {

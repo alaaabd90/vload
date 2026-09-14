@@ -247,6 +247,15 @@
             android:name="moe.matsuri.nb4a.proxy.anytls.AnyTLSSettingsActivity"
             android:configChanges="uiMode" />
         <activity
+            android:name="moe.matsuri.nb4a.proxy.snell.SnellSettingsActivity"
+            android:configChanges="uiMode" />
+        <activity
+            android:name="moe.matsuri.nb4a.proxy.openvpn.OpenVPNSettingsActivity"
+            android:configChanges="uiMode" />
+        <activity
+            android:name="moe.matsuri.nb4a.proxy.openconnect.OpenConnectSettingsActivity"
+            android:configChanges="uiMode" />
+        <activity
             android:name="moe.matsuri.nb4a.proxy.config.ConfigSettingActivity"
             android:configChanges="uiMode" />
         <activity
