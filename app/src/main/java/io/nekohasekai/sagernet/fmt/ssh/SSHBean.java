@@ -22,6 +22,12 @@ public class SSHBean extends AbstractBean {
     public String privateKey;
     public String privateKeyPassphrase;
     public String publicKey;
+    // vload: sing-box 1.14.0 added cipher/MAC/key-exchange algorithm
+    // overrides for the SSH outbound - each a newline/comma list of
+    // algorithm names, left blank to use sing-box's defaults.
+    public String cipher;
+    public String mac;
+    public String kexAlgorithm;
 
     @Override
     public void initializeDefaultValues() {
@@ -35,11 +41,14 @@ public class SSHBean extends AbstractBean {
         if (privateKey == null) privateKey = "";
         if (privateKeyPassphrase == null) privateKeyPassphrase = "";
         if (publicKey == null) publicKey = "";
+        if (cipher == null) cipher = "";
+        if (mac == null) mac = "";
+        if (kexAlgorithm == null) kexAlgorithm = "";
     }
 
     @Override
     public void serialize(ByteBufferOutput output) {
-        output.writeInt(0);
+        output.writeInt(1);
         super.serialize(output);
         output.writeString(username);
         output.writeInt(authType);
@@ -55,6 +64,9 @@ public class SSHBean extends AbstractBean {
                 break;
         }
         output.writeString(publicKey);
+        output.writeString(cipher);
+        output.writeString(mac);
+        output.writeString(kexAlgorithm);
     }
 
     @Override
@@ -75,6 +87,11 @@ public class SSHBean extends AbstractBean {
                 break;
         }
         publicKey = input.readString();
+        if (version >= 1) {
+            cipher = input.readString();
+            mac = input.readString();
+            kexAlgorithm = input.readString();
+        }
     }
 
     @NotNull

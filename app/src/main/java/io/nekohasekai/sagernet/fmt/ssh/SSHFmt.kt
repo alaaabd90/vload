@@ -21,5 +21,8 @@ fun buildSingBoxOutboundSSHBean(bean: SSHBean): SingBoxOptions.Outbound_SSHOptio
                 password = bean.password
             }
         }
+        if (bean.cipher.isNotBlank()) cipher = bean.cipher.listByLineOrComma()
+        if (bean.mac.isNotBlank()) mac = bean.mac.listByLineOrComma()
+        if (bean.kexAlgorithm.isNotBlank()) kex_algorithm = bean.kexAlgorithm.listByLineOrComma()
     }
 }
