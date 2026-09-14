@@ -1,6 +1,7 @@
 package libcore
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"libcore/procfs"
@@ -22,7 +23,7 @@ var boxPlatformInterfaceInstance adapter.PlatformInterface = &boxPlatformInterfa
 
 type boxPlatformInterfaceWrapper struct{}
 
-func (w *boxPlatformInterfaceWrapper) ReadWIFIState() adapter.WIFIState {
+func (w *boxPlatformInterfaceWrapper) ReadWIFIState(ctx context.Context) adapter.WIFIState {
 	state := strings.Split(intfBox.WIFIState(), ",")
 	return adapter.WIFIState{
 		SSID:  state[0],
@@ -79,6 +80,10 @@ func (w *boxPlatformInterfaceWrapper) OpenInterface(options *tun.Options, platfo
 	return tun.New(*options)
 }
 
+func (w *boxPlatformInterfaceWrapper) ProcessPlatformOptions(platformOptions option.TunPlatformOptions) error {
+	return nil
+}
+
 func (w *boxPlatformInterfaceWrapper) UsePlatformDefaultInterfaceMonitor() bool {
 	return true
 }
@@ -109,6 +114,63 @@ func (w *boxPlatformInterfaceWrapper) UsePlatformNotification() bool {
 
 func (w *boxPlatformInterfaceWrapper) SendNotification(notification *adapter.Notification) error {
 	return nil
+}
+
+func (w *boxPlatformInterfaceWrapper) CancelNotification(identifier string, typeID int32) error {
+	return nil
+}
+
+func (w *boxPlatformInterfaceWrapper) UsePlatformNeighborResolver() bool {
+	return false
+}
+
+func (w *boxPlatformInterfaceWrapper) StartNeighborMonitor(listener adapter.NeighborUpdateListener) error {
+	return E.New("not implemented")
+}
+
+func (w *boxPlatformInterfaceWrapper) CloseNeighborMonitor(listener adapter.NeighborUpdateListener) error {
+	return E.New("not implemented")
+}
+
+// UsePlatformShell/UsePlatformBridge are both false: vload is a VPN client,
+// never a Tailscale SSH host or an L3 Bridge outbound endpoint, so none of
+// the methods below are ever actually invoked - they only exist to satisfy
+// adapter.PlatformInterface.
+
+func (w *boxPlatformInterfaceWrapper) UsePlatformShell() bool {
+	return false
+}
+
+func (w *boxPlatformInterfaceWrapper) CheckPlatformShell() error {
+	return E.New("not implemented")
+}
+
+func (w *boxPlatformInterfaceWrapper) OpenShellSession(user *adapter.PlatformUser, command string, env []string, term string, rows int32, cols int32) (adapter.ShellSession, error) {
+	return nil, E.New("not implemented")
+}
+
+func (w *boxPlatformInterfaceWrapper) LookupUser(username string) (*adapter.PlatformUser, error) {
+	return nil, E.New("not implemented")
+}
+
+func (w *boxPlatformInterfaceWrapper) LookupSFTPServer() (string, error) {
+	return "", E.New("not implemented")
+}
+
+func (w *boxPlatformInterfaceWrapper) ReadSystemSSHHostKey() ([]byte, error) {
+	return nil, E.New("not implemented")
+}
+
+func (w *boxPlatformInterfaceWrapper) TailscaleHostname() string {
+	return ""
+}
+
+func (w *boxPlatformInterfaceWrapper) UsePlatformBridge() bool {
+	return false
+}
+
+func (w *boxPlatformInterfaceWrapper) CreateBridge(options adapter.BridgeOptions) (adapter.BridgeSession, error) {
+	return nil, E.New("not implemented")
 }
 
 func (s *boxPlatformInterfaceWrapper) SystemCertificates() []string {

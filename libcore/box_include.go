@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/certificate"
 	"github.com/sagernet/sing-box/adapter/endpoint"
 	"github.com/sagernet/sing-box/adapter/inbound"
 	"github.com/sagernet/sing-box/adapter/outbound"
@@ -122,6 +123,12 @@ func nekoboxAndroidDNSTransportRegistry(localTransport LocalDNSTransport) *dns.T
 
 func nekoboxAndroidServiceRegistry() *service.Registry {
 	registry := service.NewRegistry()
+
+	return registry
+}
+
+func nekoboxAndroidCertificateProviderRegistry() *certificate.Registry {
+	registry := certificate.NewRegistry()
 
 	return registry
 }
