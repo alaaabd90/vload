@@ -373,14 +373,13 @@ class ConfigurationFragment @JvmOverloads constructor(
                 ProfileManager.updateProfile(profile)
             }
         }
-        // vload: the per-item ProfileManager.onAdd notification above only
-        // reaches the target group's list adapter if it's still alive and
-        // registered at this exact moment - after returning from the
-        // system file picker (a separate app/process), that's not always
-        // true, so newly imported profiles could silently fail to appear
-        // until the app was restarted. Force a full reload as a reliable
-        // fallback, the same mechanism bulk operations elsewhere already
-        // use (see GroupManager.postReload call sites).
+        // vload: GroupManager.postReload reaches every registered
+        // GroupManager.Listener, including the ViewPager2's GroupPagerAdapter
+        // (registered for as long as this screen exists) - its
+        // groupUpdated(Long) forces a rebind of the target group's page,
+        // which is enough to make it show current DB state whether its
+        // child GroupFragment is still alive (rebind refreshes it) or was
+        // torn down while a system picker had focus (rebind recreates it).
         GroupManager.postReload(targetId)
         onMainDispatcher {
             DataStore.editingGroup = targetId
@@ -1079,7 +1078,28 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
         }
 
-        override suspend fun groupUpdated(groupId: Long) = Unit
+        override suspend fun groupUpdated(groupId: Long) {
+            // vload: ViewPager2/FragmentStateAdapter can tear down the
+            // current page's child GroupFragment (e.g. RecyclerView view
+            // recycling while the host Activity is backgrounded by a
+            // system picker/camera Activity) without going through
+            // groupRemoved/reload - the group is still very much alive in
+            // groupList, just its on-screen fragment is gone. When that's
+            // the case, GroupFragment's own ConfigurationAdapter isn't
+            // registered as a listener anymore (unregistered in
+            // GroupFragment.onDestroy), so it never receives this
+            // notification and can't refresh itself. notifyItemChanged
+            // asks the ViewPager2 adapter to rebind that group's page: a
+            // no-op if the fragment is still alive, but if it was torn
+            // down this makes FragmentStateAdapter recreate it fresh from
+            // the DB - the same effect manually navigating away and back
+            // was observed to have.
+            val index = groupList.indexOfFirst { it.id == groupId }
+            if (index == -1) return
+            tabLayout.post {
+                notifyItemChanged(index)
+            }
+        }
 
         override suspend fun onAdd(profile: ProxyEntity) {
             if (groupList.find { it.id == profile.groupId } == null) {
@@ -1161,12 +1181,27 @@ class ConfigurationFragment @JvmOverloads constructor(
         override fun onResume() {
             super.onResume()
 
-            if (::configurationListView.isInitialized && configurationListView.size == 0) {
-                configurationListView.adapter = adapter
+            if (::configurationListView.isInitialized) {
+                // vload: always reload from the DB on resume, not just when
+                // the RecyclerView happened to render zero child views.
+                // Returning from an external activity (file picker, QR
+                // scanner, share target) can leave the list stale if a
+                // profile was added/changed while this fragment's adapter
+                // wasn't registered to receive the live ProfileManager/
+                // GroupManager notification for it (see the import()
+                // GroupManager.postReload fix - that fallback only helps if
+                // some adapter instance is listening at the right moment,
+                // which isn't guaranteed either). This unconditional reload
+                // is the actual reliability backstop; the live
+                // notifications remain a snappy-update optimization on top
+                // of it, not the only path to a correct list.
+                if (configurationListView.adapter !== adapter) {
+                    configurationListView.adapter = adapter
+                }
                 runOnDefaultDispatcher {
                     adapter?.reloadProfiles()
                 }
-            } else if (!::configurationListView.isInitialized) {
+            } else {
                 onViewCreated(requireView(), null)
             }
             checkOrderMenu()
@@ -1231,6 +1266,13 @@ class ConfigurationFragment @JvmOverloads constructor(
             GroupManager.addListener(adapter!!)
             configurationListView.adapter = adapter
             configurationListView.setItemViewCacheSize(20)
+            // vload: a freshly (re)created fragment's adapter starts out
+            // empty - load current DB state immediately rather than
+            // waiting for onResume(), which isn't guaranteed to run in
+            // every case that can lead here (see groupUpdated(Long) above).
+            runOnDefaultDispatcher {
+                adapter?.reloadProfiles()
+            }
 
             if (!select) {
 

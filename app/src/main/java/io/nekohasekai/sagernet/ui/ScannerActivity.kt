@@ -135,8 +135,10 @@ class ScannerActivity : ThemedActivity(),
                     // before this coroutine even started, so MainActivity's
                     // profile list adapter may not be (re)registered as a
                     // ProfileManager.Listener yet when onAdd fires here -
-                    // force a full reload as a reliable fallback (same
-                    // mechanism used for bulk operations elsewhere).
+                    // postReload reaches the ViewPager2 adapter directly
+                    // (see ConfigurationFragment.GroupPagerAdapter.groupUpdated),
+                    // which reliably refreshes/recreates the target group's
+                    // page regardless of what's currently registered.
                     GroupManager.postReload(currentGroupId)
                 } else {
                     onMainDispatcher {
