@@ -41,6 +41,14 @@ public class HysteriaBean extends AbstractBean {
     public String obfsType;
     public Integer obfsGeckoMinPacketSize;
     public Integer obfsGeckoMaxPacketSize;
+    // vload: sing-box 1.14.0 unified QUICOptions - streamReceiveWindow/
+    // connectionReceiveWindow/disableMtuDiscovery above are reused as-is
+    // (HY2 gained equivalent fields under the new names); these four are
+    // genuinely new, HY2-only.
+    public Integer quicIdleTimeout;
+    public Integer quicKeepAlivePeriod;
+    public Integer quicMaxConcurrentStreams;
+    public Integer quicInitialPacketSize;
 
     // HY1
 
@@ -94,11 +102,15 @@ public class HysteriaBean extends AbstractBean {
         if (obfsType == null) obfsType = "salamander";
         if (obfsGeckoMinPacketSize == null) obfsGeckoMinPacketSize = 0;
         if (obfsGeckoMaxPacketSize == null) obfsGeckoMaxPacketSize = 0;
+        if (quicIdleTimeout == null) quicIdleTimeout = 0;
+        if (quicKeepAlivePeriod == null) quicKeepAlivePeriod = 0;
+        if (quicMaxConcurrentStreams == null) quicMaxConcurrentStreams = 0;
+        if (quicInitialPacketSize == null) quicInitialPacketSize = 0;
     }
 
     @Override
     public void serialize(ByteBufferOutput output) {
-        output.writeInt(9);
+        output.writeInt(10);
         super.serialize(output);
 
         output.writeInt(protocolVersion);
@@ -126,6 +138,10 @@ public class HysteriaBean extends AbstractBean {
         output.writeString(obfsType);
         output.writeInt(obfsGeckoMinPacketSize);
         output.writeInt(obfsGeckoMaxPacketSize);
+        output.writeInt(quicIdleTimeout);
+        output.writeInt(quicKeepAlivePeriod);
+        output.writeInt(quicMaxConcurrentStreams);
+        output.writeInt(quicInitialPacketSize);
     }
 
     @Override
@@ -179,6 +195,12 @@ public class HysteriaBean extends AbstractBean {
             obfsType = input.readString();
             obfsGeckoMinPacketSize = input.readInt();
             obfsGeckoMaxPacketSize = input.readInt();
+        }
+        if (version >= 10) {
+            quicIdleTimeout = input.readInt();
+            quicKeepAlivePeriod = input.readInt();
+            quicMaxConcurrentStreams = input.readInt();
+            quicInitialPacketSize = input.readInt();
         }
     }
 

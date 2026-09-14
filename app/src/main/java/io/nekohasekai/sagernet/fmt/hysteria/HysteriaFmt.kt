@@ -390,14 +390,18 @@ fun buildSingBoxOutboundHysteriaBean(bean: HysteriaBean): SingBoxOptions.SingBox
                     password = bean.obfuscation
                 }
             }
-//            disable_mtu_discovery = bean.disableMtuDiscovery
             password = bean.authPayload
-//            if (bean.streamReceiveWindow > 0) {
-//                recv_window_conn = bean.streamReceiveWindow.toLong()
-//            }
-//            if (bean.connectionReceiveWindow > 0) {
-//                recv_window_conn = bean.connectionReceiveWindow.toLong()
-//            }
+            // vload: sing-box 1.14.0's unified QUICOptions gave Hysteria2
+            // equivalents of Hysteria1's older recv_window_conn/recv_window/
+            // disable_mtu_discovery fields (which HY2 never had before) -
+            // reuse the same bean fields for both.
+            if (bean.disableMtuDiscovery) disable_path_mtu_discovery = true
+            if (bean.streamReceiveWindow > 0) stream_receive_window = bean.streamReceiveWindow.toLong()
+            if (bean.connectionReceiveWindow > 0) connection_receive_window = bean.connectionReceiveWindow.toLong()
+            if (bean.quicIdleTimeout > 0) idle_timeout = "${bean.quicIdleTimeout}s"
+            if (bean.quicKeepAlivePeriod > 0) keep_alive_period = "${bean.quicKeepAlivePeriod}s"
+            if (bean.quicMaxConcurrentStreams > 0) max_concurrent_streams = bean.quicMaxConcurrentStreams
+            if (bean.quicInitialPacketSize > 0) initial_packet_size = bean.quicInitialPacketSize
             tls = SingBoxOptions.OutboundTLSOptions().apply {
                 if (bean.sni.isNotBlank()) {
                     server_name = bean.sni

@@ -7,6 +7,7 @@ import androidx.preference.SwitchPreference
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.preference.EditTextPreferenceModifiers
 import io.nekohasekai.sagernet.fmt.tuic.TuicBean
 import io.nekohasekai.sagernet.ktx.applyDefaultValues
 
@@ -28,6 +29,13 @@ class TuicSettingsActivity : ProfileSettingsActivity<TuicBean>() {
         DataStore.serverSNI = sni
         DataStore.serverReduceRTT = reduceRTT
         DataStore.serverAllowInsecure = allowInsecure
+        DataStore.serverQuicIdleTimeout = quicIdleTimeout
+        DataStore.serverQuicKeepAlivePeriod = quicKeepAlivePeriod
+        DataStore.serverQuicStreamReceiveWindow = quicStreamReceiveWindow
+        DataStore.serverQuicConnectionReceiveWindow = quicConnectionReceiveWindow
+        DataStore.serverQuicMaxConcurrentStreams = quicMaxConcurrentStreams
+        DataStore.serverQuicInitialPacketSize = quicInitialPacketSize
+        DataStore.serverQuicDisablePathMtuDiscovery = quicDisablePathMtuDiscovery
     }
 
     override fun TuicBean.serialize() {
@@ -44,6 +52,13 @@ class TuicSettingsActivity : ProfileSettingsActivity<TuicBean>() {
         sni = DataStore.serverSNI
         reduceRTT = DataStore.serverReduceRTT
         allowInsecure = DataStore.serverAllowInsecure
+        quicIdleTimeout = DataStore.serverQuicIdleTimeout
+        quicKeepAlivePeriod = DataStore.serverQuicKeepAlivePeriod
+        quicStreamReceiveWindow = DataStore.serverQuicStreamReceiveWindow
+        quicConnectionReceiveWindow = DataStore.serverQuicConnectionReceiveWindow
+        quicMaxConcurrentStreams = DataStore.serverQuicMaxConcurrentStreams
+        quicInitialPacketSize = DataStore.serverQuicInitialPacketSize
+        quicDisablePathMtuDiscovery = DataStore.serverQuicDisablePathMtuDiscovery
     }
 
     override fun PreferenceFragmentCompat.createPreferences(
@@ -62,6 +77,19 @@ class TuicSettingsActivity : ProfileSettingsActivity<TuicBean>() {
 
         findPreference<EditTextPreference>(Key.SERVER_PASSWORD)!!.apply {
             summaryProvider = PasswordSummaryProvider
+        }
+
+        for (key in listOf(
+            Key.SERVER_QUIC_IDLE_TIMEOUT,
+            Key.SERVER_QUIC_KEEP_ALIVE_PERIOD,
+            Key.SERVER_QUIC_STREAM_RECEIVE_WINDOW,
+            Key.SERVER_QUIC_CONNECTION_RECEIVE_WINDOW,
+            Key.SERVER_QUIC_MAX_CONCURRENT_STREAMS,
+            Key.SERVER_QUIC_INITIAL_PACKET_SIZE,
+        )) {
+            findPreference<EditTextPreference>(key)!!.apply {
+                setOnBindEditTextListener(EditTextPreferenceModifiers.Number)
+            }
         }
     }
 

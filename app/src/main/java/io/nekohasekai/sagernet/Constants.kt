@@ -118,6 +118,13 @@ object Key {
     const val SERVER_OBFS_TYPE = "obfsType"
     const val SERVER_OBFS_GECKO_MIN_PACKET_SIZE = "obfsGeckoMinPacketSize"
     const val SERVER_OBFS_GECKO_MAX_PACKET_SIZE = "obfsGeckoMaxPacketSize"
+    const val SERVER_QUIC_IDLE_TIMEOUT = "quicIdleTimeout"
+    const val SERVER_QUIC_KEEP_ALIVE_PERIOD = "quicKeepAlivePeriod"
+    const val SERVER_QUIC_MAX_CONCURRENT_STREAMS = "quicMaxConcurrentStreams"
+    const val SERVER_QUIC_INITIAL_PACKET_SIZE = "quicInitialPacketSize"
+    const val SERVER_QUIC_STREAM_RECEIVE_WINDOW = "quicStreamReceiveWindow"
+    const val SERVER_QUIC_CONNECTION_RECEIVE_WINDOW = "quicConnectionReceiveWindow"
+    const val SERVER_QUIC_DISABLE_PATH_MTU_DISCOVERY = "quicDisablePathMtuDiscovery"
 
     const val SERVER_PRIVATE_KEY = "serverPrivateKey"
     const val SERVER_INSECURE_CONCURRENCY = "serverInsecureConcurrency"

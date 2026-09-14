@@ -132,6 +132,22 @@
         <SwitchPreference
             app:key="disableChromeParrot"
             app:title="Disable Chrome QUIC Fingerprint Parroting" />
+        <EditTextPreference
+            app:key="quicIdleTimeout"
+            app:summary="Seconds. Leave blank/0 for sing-box's default."
+            app:title="QUIC Idle Timeout" />
+        <EditTextPreference
+            app:key="quicKeepAlivePeriod"
+            app:summary="Seconds. Leave blank/0 for sing-box's default."
+            app:title="QUIC Keep-Alive Period" />
+        <EditTextPreference
+            app:key="quicMaxConcurrentStreams"
+            app:summary="Leave blank/0 for sing-box's default."
+            app:title="QUIC Max Concurrent Streams" />
+        <EditTextPreference
+            app:key="quicInitialPacketSize"
+            app:summary="Leave blank/0 for sing-box's default."
+            app:title="QUIC Initial Packet Size" />
     </PreferenceCategory>
 
 </PreferenceScreen>

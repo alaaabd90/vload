@@ -53,4 +53,27 @@
             app:useSimpleSummaryProvider="true" />
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="Idle Session Pool (optional)">
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_texture_24"
+            app:key="idleSessionCheckInterval"
+            app:summary="Seconds. Leave blank/0 for sing-box's default."
+            app:title="Idle Session Check Interval" />
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_texture_24"
+            app:key="idleSessionTimeout"
+            app:summary="Seconds. Leave blank/0 for sing-box's default."
+            app:title="Idle Session Timeout" />
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_texture_24"
+            app:key="minIdleSession"
+            app:summary="Leave blank/0 for sing-box's default."
+            app:title="Min Idle Session" />
+        <EditTextPreference
+            app:icon="@drawable/ic_action_copyright"
+            app:key="clientMetadata"
+            app:title="Client Metadata"
+            app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
 </PreferenceScreen>

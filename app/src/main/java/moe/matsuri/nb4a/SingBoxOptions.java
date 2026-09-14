@@ -4326,6 +4326,22 @@ public class SingBoxOptions {
 
         public OutboundTLSOptions tls;
 
+        // vload: sing-box's unified QUICOptions (HTTP2Options + QUIC-specific),
+        // shared verbatim by TUIC and Hysteria2's Outbound_Hysteria2Options below.
+        public String idle_timeout;
+
+        public String keep_alive_period;
+
+        public Long stream_receive_window;
+
+        public Long connection_receive_window;
+
+        public Integer max_concurrent_streams;
+
+        public Integer initial_packet_size;
+
+        public Boolean disable_path_mtu_discovery;
+
     }
 
     public static class Outbound_Hysteria2Options extends Outbound {
@@ -4389,6 +4405,22 @@ public class SingBoxOptions {
         public String bbr_profile;
 
         public Boolean disable_chrome_parrot;
+
+        // vload: sing-box's unified QUICOptions - see the identical block
+        // on Outbound_TUICOptions above.
+        public String idle_timeout;
+
+        public String keep_alive_period;
+
+        public Long stream_receive_window;
+
+        public Long connection_receive_window;
+
+        public Integer max_concurrent_streams;
+
+        public Integer initial_packet_size;
+
+        public Boolean disable_path_mtu_discovery;
 
     }
 
@@ -4697,6 +4729,10 @@ public class SingBoxOptions {
         public String idle_session_check_interval;
 
         public String idle_session_timeout;
+
+        public Integer min_idle_session;
+
+        public String client_metadata;
 
     }
 
