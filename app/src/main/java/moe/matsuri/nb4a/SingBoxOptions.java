@@ -602,6 +602,12 @@ public class SingBoxOptions {
 
         public String password;
 
+        // vload: "gecko" obfs type (sing-box 1.14.0) - mutually exclusive
+        // with password, which only applies to "salamander".
+        public Integer min_packet_size;
+
+        public Integer max_packet_size;
+
     }
 
     public static class Hysteria2User extends SingBoxOption {
@@ -4376,6 +4382,13 @@ public class SingBoxOptions {
         public List<String> server_ports;
 
         public String hop_interval;
+
+        // vload: sing-box 1.14.0 additions
+        public String hop_interval_max;
+
+        public String bbr_profile;
+
+        public Boolean disable_chrome_parrot;
 
     }
 

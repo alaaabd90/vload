@@ -32,6 +32,16 @@ public class HysteriaBean extends AbstractBean {
     public Boolean disableMtuDiscovery;
     public Integer hopInterval;
 
+    // HY2 (sing-box 1.14.0)
+    public Integer hopIntervalMax;
+    public String bbrProfile;
+    public Boolean disableChromeParrot;
+    // obfuscation type: "salamander" (uses `obfuscation` above as password)
+    // or "gecko" (packet padding, no password)
+    public String obfsType;
+    public Integer obfsGeckoMinPacketSize;
+    public Integer obfsGeckoMaxPacketSize;
+
     // HY1
 
     public String alpn;
@@ -78,11 +88,17 @@ public class HysteriaBean extends AbstractBean {
         if (disableMtuDiscovery == null) disableMtuDiscovery = false;
         if (hopInterval == null) hopInterval = 10;
         if (serverPorts == null) serverPorts = "443";
+        if (hopIntervalMax == null) hopIntervalMax = 0;
+        if (bbrProfile == null) bbrProfile = "";
+        if (disableChromeParrot == null) disableChromeParrot = false;
+        if (obfsType == null) obfsType = "salamander";
+        if (obfsGeckoMinPacketSize == null) obfsGeckoMinPacketSize = 0;
+        if (obfsGeckoMaxPacketSize == null) obfsGeckoMaxPacketSize = 0;
     }
 
     @Override
     public void serialize(ByteBufferOutput output) {
-        output.writeInt(7);
+        output.writeInt(9);
         super.serialize(output);
 
         output.writeInt(protocolVersion);
@@ -104,6 +120,12 @@ public class HysteriaBean extends AbstractBean {
         output.writeBoolean(disableMtuDiscovery);
         output.writeInt(hopInterval);
         output.writeString(serverPorts);
+        output.writeInt(hopIntervalMax);
+        output.writeString(bbrProfile);
+        output.writeBoolean(disableChromeParrot);
+        output.writeString(obfsType);
+        output.writeInt(obfsGeckoMinPacketSize);
+        output.writeInt(obfsGeckoMaxPacketSize);
     }
 
     @Override
@@ -147,6 +169,16 @@ public class HysteriaBean extends AbstractBean {
             } else {
                 serverPorts = serverPort.toString();
             }
+        }
+        if (version >= 8) {
+            hopIntervalMax = input.readInt();
+            bbrProfile = input.readString();
+            disableChromeParrot = input.readBoolean();
+        }
+        if (version >= 9) {
+            obfsType = input.readString();
+            obfsGeckoMinPacketSize = input.readInt();
+            obfsGeckoMaxPacketSize = input.readInt();
         }
     }
 

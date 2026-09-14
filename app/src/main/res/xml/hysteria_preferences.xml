@@ -101,6 +101,37 @@
             app:key="hopInterval"
             app:title="@string/hop_interval"
             app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:key="hopIntervalMax"
+            app:summary="Optional, randomizes hop interval between the two values. Leave blank/0 to disable."
+            app:title="Hop Interval Max (seconds)"
+            app:useSimpleSummaryProvider="true" />
+        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+            app:defaultValue="salamander"
+            app:entries="@array/hysteria2_obfs_type"
+            app:entryValues="@array/hysteria2_obfs_type"
+            app:icon="@drawable/ic_baseline_texture_24"
+            app:key="obfsType"
+            app:title="Obfuscation Type"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:key="obfsGeckoMinPacketSize"
+            app:title="Gecko Min Packet Size"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:key="obfsGeckoMaxPacketSize"
+            app:title="Gecko Max Packet Size"
+            app:useSimpleSummaryProvider="true" />
+        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+            app:entries="@array/hysteria2_bbr_profile"
+            app:entryValues="@array/hysteria2_bbr_profile"
+            app:icon="@drawable/ic_baseline_layers_24"
+            app:key="bbrProfile"
+            app:summary="Optional, leave unset for sing-box's default"
+            app:title="BBR Profile" />
+        <SwitchPreference
+            app:key="disableChromeParrot"
+            app:title="Disable Chrome QUIC Fingerprint Parroting" />
     </PreferenceCategory>
 
-</PreferenceScreen> 
+</PreferenceScreen>

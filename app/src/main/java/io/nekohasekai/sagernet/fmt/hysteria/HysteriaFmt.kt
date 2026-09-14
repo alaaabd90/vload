@@ -373,9 +373,18 @@ fun buildSingBoxOutboundHysteriaBean(bean: HysteriaBean): SingBoxOptions.SingBox
                 server_ports = hopPortsToSingboxList(bean.serverPorts)
             }
             hop_interval = "${bean.hopInterval}s"
+            if (bean.hopIntervalMax > 0) hop_interval_max = "${bean.hopIntervalMax}s"
+            if (bean.bbrProfile.isNotBlank()) bbr_profile = bean.bbrProfile
+            if (bean.disableChromeParrot) disable_chrome_parrot = true
             up_mbps = bean.uploadMbps
             down_mbps = bean.downloadMbps
-            if (bean.obfuscation.isNotBlank()) {
+            if (bean.obfsType == "gecko") {
+                obfs = SingBoxOptions.Hysteria2Obfs().apply {
+                    type = "gecko"
+                    if (bean.obfsGeckoMinPacketSize > 0) min_packet_size = bean.obfsGeckoMinPacketSize
+                    if (bean.obfsGeckoMaxPacketSize > 0) max_packet_size = bean.obfsGeckoMaxPacketSize
+                }
+            } else if (bean.obfuscation.isNotBlank()) {
                 obfs = SingBoxOptions.Hysteria2Obfs().apply {
                     type = "salamander"
                     password = bean.obfuscation
