@@ -116,6 +116,11 @@ object Key {
     const val SERVER_PRIVATE_KEY = "serverPrivateKey"
     const val SERVER_INSECURE_CONCURRENCY = "serverInsecureConcurrency"
 
+    // vload: SSH cipher/MAC/key-exchange algorithm overrides (sing-box 1.14.0)
+    const val SERVER_SSH_CIPHER = "serverSshCipher"
+    const val SERVER_SSH_MAC = "serverSshMac"
+    const val SERVER_SSH_KEX = "serverSshKex"
+
     const val SERVER_UDP_RELAY_MODE = "serverUDPRelayMode"
     const val SERVER_CONGESTION_CONTROLLER = "serverCongestionController"
     const val SERVER_DISABLE_SNI = "serverDisableSNI"

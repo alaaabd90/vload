@@ -4095,6 +4095,15 @@ public class SingBoxOptions {
 
         public String client_version;
 
+        // Generate note: Listable
+        public List<String> cipher;
+
+        // Generate note: Listable
+        public List<String> mac;
+
+        // Generate note: Listable
+        public List<String> kex_algorithm;
+
     }
 
     public static class Outbound_ShadowTLSOptions extends Outbound {

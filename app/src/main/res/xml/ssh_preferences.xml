@@ -57,5 +57,27 @@
             app:useSimpleSummaryProvider="true" />
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="Algorithm Overrides">
+
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_compare_arrows_24"
+            app:key="serverSshCipher"
+            app:summary="Optional, comma or newline separated. Leave blank for sing-box defaults."
+            app:title="Cipher" />
+
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_compare_arrows_24"
+            app:key="serverSshMac"
+            app:summary="Optional, comma or newline separated. Leave blank for sing-box defaults."
+            app:title="MAC" />
+
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_compare_arrows_24"
+            app:key="serverSshKex"
+            app:summary="Optional, comma or newline separated. Leave blank for sing-box defaults."
+            app:title="Key Exchange Algorithm" />
+
+    </PreferenceCategory>
+
 
 </PreferenceScreen>
