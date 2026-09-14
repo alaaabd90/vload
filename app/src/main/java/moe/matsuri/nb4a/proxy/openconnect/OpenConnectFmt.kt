@@ -1,5 +1,6 @@
 package moe.matsuri.nb4a.proxy.openconnect
 
+import io.nekohasekai.sagernet.ktx.isIpAddress
 import moe.matsuri.nb4a.SingBoxOptions
 
 fun buildSingBoxEndpointOpenConnectBean(bean: OpenConnectBean): SingBoxOptions.Endpoint_OpenConnectOptions {
@@ -9,6 +10,14 @@ fun buildSingBoxEndpointOpenConnectBean(bean: OpenConnectBean): SingBoxOptions.E
             "${bean.serverAddress}:${bean.serverPort}"
         } else {
             bean.serverAddress
+        }
+        // vload: endpoints resolve their own server address at creation
+        // time and fail without this if it's a domain - see the identical
+        // comment in OpenVPNFmt.kt.
+        if (!bean.serverAddress.isIpAddress()) {
+            domain_resolver = SingBoxOptions.DNSDomainResolverOptions().apply {
+                server = "dns-direct"
+            }
         }
         flavor = bean.flavor
         if (bean.username.isNotBlank()) username = bean.username
