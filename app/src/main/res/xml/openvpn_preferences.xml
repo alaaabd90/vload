@@ -1,0 +1,123 @@
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <EditTextPreference
+        app:icon="@drawable/ic_social_emoji_symbols"
+        app:key="name"
+        app:title="@string/profile_name"
+        app:useSimpleSummaryProvider="true" />
+
+    <PreferenceCategory app:title="@string/proxy_cat">
+        <EditTextPreference
+            app:icon="@drawable/ic_hardware_router"
+            app:key="serverAddress"
+            app:title="@string/server_address"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:icon="@drawable/ic_maps_directions_boat"
+            app:key="serverPort"
+            app:title="@string/server_port"
+            app:useSimpleSummaryProvider="true" />
+        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+            app:defaultValue="tls"
+            app:entries="@array/openvpn_mode"
+            app:entryValues="@array/openvpn_mode"
+            app:icon="@drawable/ic_baseline_legend_toggle_24"
+            app:key="mode"
+            app:title="Mode"
+            app:useSimpleSummaryProvider="true" />
+        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+            app:defaultValue="udp"
+            app:entries="@array/openvpn_network"
+            app:entryValues="@array/openvpn_network"
+            app:icon="@drawable/ic_baseline_compare_arrows_24"
+            app:key="network"
+            app:title="@string/network"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_person_24"
+            app:key="username"
+            app:title="@string/username"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:icon="@drawable/ic_settings_password"
+            app:key="password"
+            app:title="@string/password" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="TLS mode">
+        <EditTextPreference
+            app:icon="@drawable/ic_action_copyright"
+            app:key="tlsServerName"
+            app:title="TLS Server Name"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_vpn_key_24"
+            app:key="caCertificate"
+            app:title="CA Certificate (PEM)" />
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_vpn_key_24"
+            app:key="clientCertificate"
+            app:title="Client Certificate (PEM)" />
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_vpn_key_24"
+            app:key="clientKey"
+            app:title="Client Key (PEM)" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Static key mode">
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_vpn_key_24"
+            app:key="staticKey"
+            app:title="Static Key file content" />
+        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+            app:defaultValue=""
+            app:entries="@array/openvpn_key_direction"
+            app:entryValues="@array/openvpn_key_direction"
+            app:icon="@drawable/ic_baseline_legend_toggle_24"
+            app:key="keyDirection"
+            app:title="Key Direction"
+            app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Control channel wrapper (optional)">
+        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+            app:defaultValue=""
+            app:entries="@array/openvpn_control_wrap_type"
+            app:entryValues="@array/openvpn_control_wrap_type"
+            app:icon="@drawable/ic_baseline_legend_toggle_24"
+            app:key="controlWrapType"
+            app:title="Type"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_vpn_key_24"
+            app:key="controlWrapKey"
+            app:title="Wrapper Key" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="@string/security_settings">
+        <EditTextPreference
+            app:icon="@drawable/ic_notification_enhanced_encryption"
+            app:key="cipher"
+            app:title="Cipher"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:icon="@drawable/ic_notification_enhanced_encryption"
+            app:key="auth"
+            app:title="Auth"
+            app:useSimpleSummaryProvider="true" />
+        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+            app:defaultValue=""
+            app:entries="@array/openvpn_compression"
+            app:entryValues="@array/openvpn_compression"
+            app:icon="@drawable/ic_baseline_legend_toggle_24"
+            app:key="compression"
+            app:title="Compression"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_compare_arrows_24"
+            app:key="mssFix"
+            app:title="MSS Fix"
+            app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
+</PreferenceScreen>

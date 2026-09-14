@@ -530,4 +530,63 @@
         <item>@string/sniff_override</item>
     </string-array>
 
+    <string-array name="snell_version">
+        <item>4</item>
+        <item>6</item>
+    </string-array>
+
+    <string-array name="snell_v6_mode">
+        <item>default</item>
+        <item>unshaped</item>
+        <item>unsafe-raw</item>
+    </string-array>
+
+    <string-array name="snell_obfs_mode">
+        <item>none</item>
+        <item>http</item>
+        <item>tls</item>
+    </string-array>
+
+    <string-array name="openvpn_mode">
+        <item>tls</item>
+        <item>static_key</item>
+    </string-array>
+
+    <string-array name="openvpn_network">
+        <item></item>
+        <item>udp</item>
+        <item>tcp</item>
+    </string-array>
+
+    <string-array name="openvpn_compression">
+        <item></item>
+        <item>lz4</item>
+        <item>lz4-v2</item>
+        <item>stub</item>
+        <item>stub-v2</item>
+        <item>disabled</item>
+    </string-array>
+
+    <string-array name="openvpn_key_direction">
+        <item></item>
+        <item>server</item>
+        <item>client</item>
+    </string-array>
+
+    <string-array name="openvpn_control_wrap_type">
+        <item></item>
+        <item>tls_auth</item>
+        <item>tls_crypt</item>
+        <item>tls_crypt_v2</item>
+    </string-array>
+
+    <string-array name="openconnect_flavor">
+        <item>anyconnect</item>
+        <item>gp</item>
+        <item>fortinet</item>
+        <item>f5</item>
+        <item>pulse</item>
+        <item>nc</item>
+    </string-array>
+
 </resources>

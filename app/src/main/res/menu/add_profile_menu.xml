@@ -64,6 +64,15 @@
                         android:id="@+id/action_new_anytls"
                         android:title="@string/action_anytls" />
                     <item
+                        android:id="@+id/action_new_snell"
+                        android:title="Snell" />
+                    <item
+                        android:id="@+id/action_new_openvpn"
+                        android:title="OpenVPN" />
+                    <item
+                        android:id="@+id/action_new_openconnect"
+                        android:title="OpenConnect" />
+                    <item
                         android:id="@+id/action_new_ssh"
                         android:title="@string/action_ssh" />
                     <item

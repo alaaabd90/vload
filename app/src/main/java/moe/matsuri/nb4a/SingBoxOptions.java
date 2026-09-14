@@ -113,6 +113,11 @@ public class SingBoxOptions {
 
         public List<SingBoxOption> outbounds;
 
+        // vload: config-level sibling of outbounds, for protocols that own
+        // a persistent tunnel interface (WireGuard, OpenVPN, OpenConnect)
+        // rather than dialing per-connection - see Endpoint.
+        public List<SingBoxOption> endpoints;
+
         public RouteOptions route;
 
         public ExperimentalOptions experimental;
@@ -312,8 +317,6 @@ public class SingBoxOptions {
 
         public Boolean reverse_mapping;
 
-        public DNSFakeIPOptions fakeip;
-
         // Generate note: nested type DNSClientOptions
         public String strategy;
 
@@ -327,21 +330,39 @@ public class SingBoxOptions {
 
     }
 
+    // vload: rewritten for sing-box 1.12+'s type-discriminated DNS server
+    // format (the old flat "address"-URL scheme this mirrored was removed
+    // entirely in 1.14.0 - see legacyDNSServerRemovedMessage upstream).
     public static class DNSServerOptions extends SingBoxOption {
+
+        public String type;
 
         public String tag;
 
-        public String address;
+        // local/remote server dialer options
+        public String detour;
+        public DNSDomainResolverOptions domain_resolver;
 
-        public String address_resolver;
+        // remote server address (udp/tcp/tls/https/quic/h3)
+        public String server;
 
-        public String address_strategy;
+        public Integer server_port;
 
-        public Long address_fallback_delay;
+        // https/h3 only
+        public String path;
+
+        // fakeip only
+        public String inet4_range;
+
+        public String inet6_range;
+
+    }
+
+    public static class DNSDomainResolverOptions extends SingBoxOption {
+
+        public String server;
 
         public String strategy;
-
-        public String detour;
 
     }
 
@@ -354,16 +375,6 @@ public class SingBoxOptions {
         public Boolean disable_expire;
 
         public Boolean independent_cache;
-
-    }
-
-    public static class DNSFakeIPOptions extends SingBoxOption {
-
-        public Boolean enabled;
-
-        public String inet4_range;
-
-        public String inet6_range;
 
     }
 
@@ -839,6 +850,15 @@ public class SingBoxOptions {
 
     }
 
+
+    // vload: endpoints (WireGuard/OpenVPN/OpenConnect) - see MyOptions.endpoints.
+    public static class Endpoint extends SingBoxOption {
+
+        public String type;
+
+        public String tag;
+
+    }
 
     public static class Outbound extends SingBoxOption {
 
@@ -2782,12 +2802,9 @@ public class SingBoxOptions {
 
     public static class WireGuardPeer extends SingBoxOption {
 
-        // Generate note: nested type ServerOptions
-        public String server;
+        public String address;
 
-        public Integer server_port;
-
-        // End of public ServerOptions ;
+        public Integer port;
 
         public String public_key;
 
@@ -2795,6 +2812,8 @@ public class SingBoxOptions {
 
         // Generate note: Listable
         public List<String> allowed_ips;
+
+        public Integer persistent_keepalive_interval;
 
         // Generate note: Base64 String
         public String reserved;
@@ -3855,9 +3874,13 @@ public class SingBoxOptions {
 
     }
 
-    public static class Outbound_WireGuardOptions extends Outbound {
+    // vload: rewritten as an endpoint (sing-box moved WireGuard from a
+    // regular outbound to an "endpoint" - a persistent tunnel interface,
+    // config-level sibling of outbounds/inbounds - and switched from a
+    // single implicit peer to an explicit peers[] list). See
+    // WireGuardEndpointOptions/WireGuardPeer upstream.
+    public static class Endpoint_WireGuardOptions extends Endpoint {
 
-        // Generate note: nested type DialerOptions
         public String detour;
 
         public String bind_interface;
@@ -3880,43 +3903,26 @@ public class SingBoxOptions {
 
         public Boolean udp_fragment;
 
-
         public String domain_strategy;
 
         public Long fallback_delay;
 
-        // End of public DialerOptions ;
+        public Boolean system;
 
-        public Boolean system_interface;
-
-        public String interface_name;
-
-        // Generate note: Listable
-        public List<String> local_address;
-
-        public String private_key;
-
-        public List<WireGuardPeer> peers;
-
-        // Generate note: nested type ServerOptions
-        public String server;
-
-        public Integer server_port;
-
-        // End of public ServerOptions ;
-
-        public String peer_public_key;
-
-        public String pre_shared_key;
-
-        // Generate note: Base64 String
-        public String reserved;
-
-        public Integer workers;
+        public String name;
 
         public Integer mtu;
 
-        public String network;
+        // Generate note: Listable
+        public List<String> address;
+
+        public String private_key;
+
+        public Integer listen_port;
+
+        public List<WireGuardPeer> peers;
+
+        public Integer workers;
 
     }
 
@@ -4558,6 +4564,13 @@ public class SingBoxOptions {
 
         public Integer rewrite_ttl;
 
+        // vload: DNS rule "action" (route is implicit via `server` above;
+        // "predefined" replaces the removed rcode://success pseudo-server -
+        // see legacyDNSServerRemovedMessage upstream).
+        public String action;
+
+        public String rcode;
+
     }
 
     public static class V2RayTransportOptions_HTTPOptions extends V2RayTransportOptions {
@@ -4662,6 +4675,195 @@ public class SingBoxOptions {
         public String idle_session_check_interval;
 
         public String idle_session_timeout;
+
+    }
+
+    public static class Outbound_SnellOptions extends Outbound {
+
+        // Generate note: nested type DialerOptions
+        public String detour;
+
+        public String bind_interface;
+
+        public String protect_path;
+
+        public Integer routing_mark;
+
+        public Boolean reuse_addr;
+
+        public String connect_timeout;
+
+        public Boolean tcp_fast_open;
+
+        public String domain_strategy;
+
+        // End of public DialerOptions ;
+
+        // Generate note: nested type ServerOptions
+        public String server;
+
+        public Integer server_port;
+
+        // End of public ServerOptions ;
+
+        // 4 or 6. Version 6 replaces obfs with a "mode" (default/unshaped/unsafe-raw).
+        public Integer version;
+
+        public String psk;
+
+        public String userkey;
+
+        public Boolean reuse;
+
+        // version=4 only
+        public String obfs_mode;
+
+        public String obfs_host;
+
+        // version=6 only
+        public String mode;
+
+    }
+
+    // vload: rewritten as an endpoint (OpenVPNClientEndpointOptions
+    // upstream) - OpenVPN owns a persistent tunnel interface like WireGuard,
+    // it's not a regular outbound. control_wrap also moved to live under
+    // tls, not the top level.
+    public static class Endpoint_OpenVPNOptions extends Endpoint {
+
+        public String detour;
+
+        public String bind_interface;
+
+        public String protect_path;
+
+        public Integer routing_mark;
+
+        public Boolean reuse_addr;
+
+        public String connect_timeout;
+
+        public Boolean tcp_fast_open;
+
+        public String domain_strategy;
+
+        public String server;
+
+        public Integer server_port;
+
+        // "tls" or "static_key"
+        public String mode;
+
+        // udp/udp4/udp6/tcp/tcp4/tcp6
+        public String network;
+
+        public List<String> address; // CIDR strings, e.g. "10.8.0.2/24" - client's tunnel address(es)
+
+        public String username;
+
+        public String password;
+
+        // TLS mode
+        public OpenVPNTLSOptions tls;
+
+        // static_key mode - full static key file content
+        public String static_key;
+
+        // "server" or "client" - required when a control-channel wrapper key is used
+        public String key_direction;
+
+        public String cipher;
+
+        public String auth;
+
+        public Integer mss_fix;
+
+    }
+
+    public static class OpenVPNTLSOptions extends SingBoxOption {
+
+        public String server_name;
+
+        public String certificate; // CA certificate, full PEM text
+
+        public String client_certificate;
+
+        public String client_key;
+
+        // Optional control-channel wrapper (tls-auth/tls-crypt)
+        public OpenVPNControlWrapOptions control_wrap;
+
+    }
+
+    public static class OpenVPNControlWrapOptions extends SingBoxOption {
+
+        // tls_auth/tls_crypt/tls_crypt_v2
+        public String type;
+
+        public String key;
+
+        // "server" or "client"
+        public String direction;
+
+    }
+
+    // vload: rewritten as an endpoint (OpenConnectEndpointOptions upstream) -
+    // same tunnel-interface reasoning as OpenVPN/WireGuard above.
+    public static class Endpoint_OpenConnectOptions extends Endpoint {
+
+        public String detour;
+
+        public String bind_interface;
+
+        public String protect_path;
+
+        public Integer routing_mark;
+
+        public Boolean reuse_addr;
+
+        public String connect_timeout;
+
+        public Boolean tcp_fast_open;
+
+        public String domain_strategy;
+
+        public String server;
+
+        // anyconnect/gp/fortinet/f5/pulse/nc
+        public String flavor;
+
+        public String username;
+
+        public String password;
+
+        public String auth_group;
+
+        // Pre-authenticated session cookie, if you have one instead of username/password
+        public String cookie;
+
+        public String user_agent;
+
+        public OpenConnectTLSOptions tls;
+
+        public Boolean no_udp;
+
+        public Integer mtu;
+
+        public String dpd_interval;
+
+    }
+
+    public static class OpenConnectTLSOptions extends SingBoxOption {
+
+        public Boolean insecure;
+
+        public String server_name;
+
+        public String certificate_authority;
+
+        public String client_certificate;
+
+        public String client_key;
 
     }
 

@@ -18,7 +18,10 @@ import io.nekohasekai.sagernet.fmt.mieru.MieruBean;
 import io.nekohasekai.sagernet.fmt.naive.NaiveBean;
 import io.nekohasekai.sagernet.fmt.shadowsocks.ShadowsocksBean;
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean;
+import moe.matsuri.nb4a.proxy.openconnect.OpenConnectBean;
+import moe.matsuri.nb4a.proxy.openvpn.OpenVPNBean;
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSBean;
+import moe.matsuri.nb4a.proxy.snell.SnellBean;
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean;
 import io.nekohasekai.sagernet.fmt.ssh.SSHBean;
 import io.nekohasekai.sagernet.fmt.trojan.TrojanBean;
@@ -148,6 +151,24 @@ public class KryoConverters {
     public static AnyTLSBean anyTLSDeserialize(byte[] bytes) {
         if (JavaUtil.isEmpty(bytes)) return null;
         return deserialize(new AnyTLSBean(), bytes);
+    }
+
+    @TypeConverter
+    public static SnellBean snellDeserialize(byte[] bytes) {
+        if (JavaUtil.isEmpty(bytes)) return null;
+        return deserialize(new SnellBean(), bytes);
+    }
+
+    @TypeConverter
+    public static OpenVPNBean openVPNDeserialize(byte[] bytes) {
+        if (JavaUtil.isEmpty(bytes)) return null;
+        return deserialize(new OpenVPNBean(), bytes);
+    }
+
+    @TypeConverter
+    public static OpenConnectBean openConnectDeserialize(byte[] bytes) {
+        if (JavaUtil.isEmpty(bytes)) return null;
+        return deserialize(new OpenConnectBean(), bytes);
     }
 
 

@@ -22,7 +22,7 @@ import io.nekohasekai.sagernet.fmt.tuic.buildSingBoxOutboundTuicBean
 import io.nekohasekai.sagernet.fmt.v2ray.StandardV2RayBean
 import io.nekohasekai.sagernet.fmt.v2ray.buildSingBoxOutboundStandardV2RayBean
 import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
-import io.nekohasekai.sagernet.fmt.wireguard.buildSingBoxOutboundWireguardBean
+import io.nekohasekai.sagernet.fmt.wireguard.buildSingBoxEndpointWireguardBean
 import io.nekohasekai.sagernet.ktx.isIpAddress
 import io.nekohasekai.sagernet.ktx.mkPort
 import io.nekohasekai.sagernet.utils.PackageCache
@@ -32,6 +32,12 @@ import moe.matsuri.nb4a.plugin.Plugins
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
 import moe.matsuri.nb4a.proxy.anytls.buildSingBoxOutboundAnyTLSBean
 import moe.matsuri.nb4a.proxy.config.ConfigBean
+import moe.matsuri.nb4a.proxy.openconnect.OpenConnectBean
+import moe.matsuri.nb4a.proxy.openconnect.buildSingBoxEndpointOpenConnectBean
+import moe.matsuri.nb4a.proxy.openvpn.OpenVPNBean
+import moe.matsuri.nb4a.proxy.openvpn.buildSingBoxEndpointOpenVPNBean
+import moe.matsuri.nb4a.proxy.snell.SnellBean
+import moe.matsuri.nb4a.proxy.snell.buildSingBoxOutboundSnellBean
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSBean
 import moe.matsuri.nb4a.proxy.shadowtls.buildSingBoxOutboundShadowTLSBean
 import moe.matsuri.nb4a.utils.JavaUtil.gson
@@ -214,6 +220,51 @@ fun buildConfig(
             }
         }
 
+        // vload: sing-box 1.12 replaced the old flat "address"-URL DNS
+        // server scheme (address = "https://host/path", "tls://host",
+        // bare "host", "local", ...) with a type-discriminated object; the
+        // legacy scheme was removed outright in 1.14.0. This rebuilds a
+        // DNSServerOptions from the same URL-shaped strings the app's
+        // settings UI already stores, so existing user DNS settings keep
+        // working unchanged.
+        fun buildDnsServer(
+            addressOrKeyword: String,
+            dnsTag: String,
+            detourTag: String? = null,
+            resolverTag: String? = null,
+            resolverStrategy: String? = null,
+        ): DNSServerOptions = DNSServerOptions().apply {
+            tag = dnsTag
+            if (detourTag != null) detour = detourTag
+            if (addressOrKeyword == "local") {
+                type = "local"
+                return@apply
+            }
+            val uri = java.net.URI(
+                if ("://" in addressOrKeyword) addressOrKeyword else "udp://$addressOrKeyword"
+            )
+            type = when (uri.scheme) {
+                "tcp", "tls", "https", "quic", "h3" -> uri.scheme
+                else -> "udp"
+            }
+            server = uri.host ?: addressOrKeyword
+            server_port = when {
+                uri.port > 0 -> uri.port
+                type == "tls" || type == "quic" -> 853
+                type == "https" || type == "h3" -> 443
+                else -> 53
+            }
+            if (type == "https" || type == "h3") {
+                path = uri.rawPath.takeIf { !it.isNullOrBlank() } ?: "/dns-query"
+            }
+            if (resolverTag != null) {
+                domain_resolver = DNSDomainResolverOptions().apply {
+                    server = resolverTag
+                    if (resolverStrategy != null) strategy = resolverStrategy
+                }
+            }
+        }
+
         inbounds = mutableListOf()
 
         if (!forTest) {
@@ -249,6 +300,7 @@ fun buildConfig(
         }
 
         outbounds = mutableListOf()
+        endpoints = mutableListOf()
 
         // init routing object
         route = RouteOptions().apply {
@@ -375,14 +427,26 @@ fun buildConfig(
                         is ShadowsocksBean ->
                             buildSingBoxOutboundShadowsocksBean(bean)
 
+                        // vload: WireGuard/OpenVPN/OpenConnect are endpoints
+                        // (persistent tunnel interfaces), not outbounds -
+                        // see the endpoints.add branch below.
                         is WireGuardBean ->
-                            buildSingBoxOutboundWireguardBean(bean)
+                            buildSingBoxEndpointWireguardBean(bean)
 
                         is SSHBean ->
                             buildSingBoxOutboundSSHBean(bean)
 
                         is AnyTLSBean ->
                             buildSingBoxOutboundAnyTLSBean(bean)
+
+                        is SnellBean ->
+                            buildSingBoxOutboundSnellBean(bean)
+
+                        is OpenVPNBean ->
+                            buildSingBoxEndpointOpenVPNBean(bean)
+
+                        is OpenConnectBean ->
+                            buildSingBoxEndpointOpenConnectBean(bean)
 
                         else -> throw IllegalStateException("can't reach")
                     }
@@ -476,7 +540,14 @@ fun buildConfig(
                     }
                 }
 
-                outbounds.add(currentOutbound)
+                // vload: endpoints (persistent tunnel interfaces) live in
+                // their own top-level config array, not outbounds - see the
+                // WireGuardBean/OpenVPNBean/OpenConnectBean dispatch above.
+                if (bean is WireGuardBean || bean is OpenVPNBean || bean is OpenConnectBean) {
+                    endpoints.add(currentOutbound)
+                } else {
+                    outbounds.add(currentOutbound)
+                }
                 chainOutbounds.add(currentOutbound)
                 pastOutbound = currentOutbound
                 pastEntity = proxyEntity
@@ -659,7 +730,11 @@ fun buildConfig(
 
                     -2L -> {
                         userDNSRuleList += makeDnsRuleObj().apply {
-                            server = "dns-block"
+                            // vload: replaces the removed rcode://success
+                            // pseudo-server (see buildDnsServer) with the
+                            // equivalent inline rule action.
+                            action = "predefined"
+                            rcode = "success"
                             disable_cache = true
                         }
                     }
@@ -702,6 +777,13 @@ fun buildConfig(
         for (freedom in arrayOf(TAG_DIRECT, TAG_BYPASS)) outbounds.add(Outbound().apply {
             tag = freedom
             type = "direct"
+            // vload: sing-box 1.14.0 rejects a DNS server's `detour` field
+            // pointing at a completely unconfigured direct outbound
+            // ("detour to an empty direct outbound makes no sense") - dns-
+            // local/dns-direct legitimately need to detour here (bypassing
+            // the proxy to avoid a DNS resolution loop), so mark this
+            // outbound non-empty with a harmless, genuinely useful option.
+            _hack_config_map["tcp_fast_open"] = true
         })
 
         // Bypass Lookup for the first profile
@@ -733,34 +815,28 @@ fun buildConfig(
             }
         }
 
-        dns.servers.add(DNSServerOptions().apply {
-            address = "rcode://success"
-            tag = "dns-block"
-        })
-
-        dns.servers.add(DNSServerOptions().apply {
-            address = "local"
-            tag = "dns-local"
-            detour = TAG_DIRECT
-        })
+        dns.servers.add(buildDnsServer("local", "dns-local", detourTag = TAG_DIRECT))
 
         directDNS.firstOrNull().let {
-            dns.servers.add(DNSServerOptions().apply {
-                address = it ?: throw Exception("No direct DNS, check your settings!")
-                tag = "dns-direct"
-                detour = TAG_DIRECT
-                address_resolver = "dns-local"
-                strategy = autoDnsDomainStrategy(SingBoxOptionsUtil.domainStrategy(tag))
-            })
+            dns.servers.add(
+                buildDnsServer(
+                    it ?: throw Exception("No direct DNS, check your settings!"),
+                    "dns-direct",
+                    detourTag = TAG_DIRECT,
+                    resolverTag = "dns-local",
+                    resolverStrategy = autoDnsDomainStrategy(SingBoxOptionsUtil.domainStrategy("dns-direct")),
+                )
+            )
         }
 
         remoteDns.firstOrNull().let {
             // Always use direct DNS for urlTest
-            if (!forTest) dns.servers.add(DNSServerOptions().apply {
-                address = it ?: throw Exception("No remote DNS, check your settings!")
-                tag = "dns-remote"
-                address_resolver = "dns-direct"
-                strategy = autoDnsDomainStrategy(SingBoxOptionsUtil.domainStrategy(tag))
+            if (!forTest) dns.servers.add(buildDnsServer(
+                it ?: throw Exception("No remote DNS, check your settings!"),
+                "dns-remote",
+                resolverTag = "dns-direct",
+                resolverStrategy = autoDnsDomainStrategy(SingBoxOptionsUtil.domainStrategy("dns-remote")),
+            ).apply {
                 // Without this, dns-remote falls to the router's default
                 // outbound (TAG_PROXY), which combines both networks per
                 // query - fine for bulk throughput, but two networks can
@@ -841,15 +917,11 @@ fun buildConfig(
             })
             // FakeDNS obj
             if (useFakeDns) {
-                dns.fakeip = DNSFakeIPOptions().apply {
-                    enabled = true
+                dns.servers.add(DNSServerOptions().apply {
+                    type = "fakeip"
+                    tag = "dns-fake"
                     inet4_range = "198.18.0.0/15"
                     inet6_range = "fc00::/18"
-                }
-                dns.servers.add(DNSServerOptions().apply {
-                    address = "fakeip"
-                    tag = "dns-fake"
-                    strategy = "ipv4_only"
                 })
                 dns.rules.add(DNSRule_DefaultOptions().apply {
                     inbound = listOf("tun-in")
