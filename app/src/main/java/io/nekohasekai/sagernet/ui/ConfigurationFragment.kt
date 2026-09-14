@@ -1909,7 +1909,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                         val fileName = entity.displayName()
                         pendingLockedExport = LockedProfileCrypto.encryptForHwid(link, targetHwid)
                         onMainDispatcher {
-                            startFilesForResult(exportLockedConfig, "$fileName.vloadp")
+                            startFilesForResult(exportLockedConfig, "$fileName.vload")
                         }
                     } catch (e: Exception) {
                         Logs.w(e)
