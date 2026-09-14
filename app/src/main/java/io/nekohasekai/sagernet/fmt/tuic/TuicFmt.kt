@@ -101,6 +101,13 @@ fun buildSingBoxOutboundTuicBean(bean: TuicBean): SingBoxOptions.Outbound_TUICOp
             "quic" -> udp_relay_mode = "quic"
         }
         zero_rtt_handshake = bean.reduceRTT
+        if (bean.quicIdleTimeout > 0) idle_timeout = "${bean.quicIdleTimeout}s"
+        if (bean.quicKeepAlivePeriod > 0) keep_alive_period = "${bean.quicKeepAlivePeriod}s"
+        if (bean.quicStreamReceiveWindow > 0) stream_receive_window = bean.quicStreamReceiveWindow.toLong()
+        if (bean.quicConnectionReceiveWindow > 0) connection_receive_window = bean.quicConnectionReceiveWindow.toLong()
+        if (bean.quicMaxConcurrentStreams > 0) max_concurrent_streams = bean.quicMaxConcurrentStreams
+        if (bean.quicInitialPacketSize > 0) initial_packet_size = bean.quicInitialPacketSize
+        if (bean.quicDisablePathMtuDiscovery) disable_path_mtu_discovery = true
         tls = SingBoxOptions.OutboundTLSOptions().apply {
             if (bean.sni.isNotBlank()) {
                 server_name = bean.sni

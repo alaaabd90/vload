@@ -73,4 +73,34 @@
             app:title="@string/allow_insecure" />
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="QUIC Options (optional)">
+        <EditTextPreference
+            app:key="quicIdleTimeout"
+            app:summary="Seconds. Leave blank/0 for sing-box's default."
+            app:title="Idle Timeout" />
+        <EditTextPreference
+            app:key="quicKeepAlivePeriod"
+            app:summary="Seconds. Leave blank/0 for sing-box's default."
+            app:title="Keep-Alive Period" />
+        <EditTextPreference
+            app:key="quicStreamReceiveWindow"
+            app:summary="Bytes. Leave blank/0 for sing-box's default."
+            app:title="Stream Receive Window" />
+        <EditTextPreference
+            app:key="quicConnectionReceiveWindow"
+            app:summary="Bytes. Leave blank/0 for sing-box's default."
+            app:title="Connection Receive Window" />
+        <EditTextPreference
+            app:key="quicMaxConcurrentStreams"
+            app:summary="Leave blank/0 for sing-box's default."
+            app:title="Max Concurrent Streams" />
+        <EditTextPreference
+            app:key="quicInitialPacketSize"
+            app:summary="Leave blank/0 for sing-box's default."
+            app:title="Initial Packet Size" />
+        <SwitchPreference
+            app:key="quicDisablePathMtuDiscovery"
+            app:title="Disable Path MTU Discovery" />
+    </PreferenceCategory>
+
 </PreferenceScreen>

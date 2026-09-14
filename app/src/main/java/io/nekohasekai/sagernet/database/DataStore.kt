@@ -226,6 +226,13 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var serverObfsType by profileCacheStore.string(Key.SERVER_OBFS_TYPE) { "salamander" }
     var serverObfsGeckoMinPacketSize by profileCacheStore.stringToInt(Key.SERVER_OBFS_GECKO_MIN_PACKET_SIZE)
     var serverObfsGeckoMaxPacketSize by profileCacheStore.stringToInt(Key.SERVER_OBFS_GECKO_MAX_PACKET_SIZE)
+    var serverQuicIdleTimeout by profileCacheStore.stringToInt(Key.SERVER_QUIC_IDLE_TIMEOUT)
+    var serverQuicKeepAlivePeriod by profileCacheStore.stringToInt(Key.SERVER_QUIC_KEEP_ALIVE_PERIOD)
+    var serverQuicMaxConcurrentStreams by profileCacheStore.stringToInt(Key.SERVER_QUIC_MAX_CONCURRENT_STREAMS)
+    var serverQuicInitialPacketSize by profileCacheStore.stringToInt(Key.SERVER_QUIC_INITIAL_PACKET_SIZE)
+    var serverQuicStreamReceiveWindow by profileCacheStore.stringToInt(Key.SERVER_QUIC_STREAM_RECEIVE_WINDOW)
+    var serverQuicConnectionReceiveWindow by profileCacheStore.stringToInt(Key.SERVER_QUIC_CONNECTION_RECEIVE_WINDOW)
+    var serverQuicDisablePathMtuDiscovery by profileCacheStore.boolean(Key.SERVER_QUIC_DISABLE_PATH_MTU_DISCOVERY)
 
     var protocolVersion by profileCacheStore.stringToInt(Key.PROTOCOL_VERSION) { 2 } // default is SOCKS5
 

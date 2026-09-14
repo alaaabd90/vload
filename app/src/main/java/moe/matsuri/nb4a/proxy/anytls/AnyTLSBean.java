@@ -36,6 +36,12 @@ public class AnyTLSBean extends AbstractBean {
 
     public String echConfig;
 
+    // vload: sing-box 1.14.0 idle-session pool tuning + client metadata tag
+    public Integer idleSessionCheckInterval;
+    public Integer idleSessionTimeout;
+    public Integer minIdleSession;
+    public String clientMetadata;
+
     @Override
     public void initializeDefaultValues() {
         super.initializeDefaultValues();
@@ -46,11 +52,15 @@ public class AnyTLSBean extends AbstractBean {
         if (utlsFingerprint == null) utlsFingerprint = "";
         if (allowInsecure == null) allowInsecure = false;
         if (echConfig == null) echConfig = "";
+        if (idleSessionCheckInterval == null) idleSessionCheckInterval = 0;
+        if (idleSessionTimeout == null) idleSessionTimeout = 0;
+        if (minIdleSession == null) minIdleSession = 0;
+        if (clientMetadata == null) clientMetadata = "";
     }
 
     @Override
     public void serialize(ByteBufferOutput output) {
-        output.writeInt(0);
+        output.writeInt(1);
         super.serialize(output);
         output.writeString(password);
         output.writeString(sni);
@@ -59,6 +69,10 @@ public class AnyTLSBean extends AbstractBean {
         output.writeString(utlsFingerprint);
         output.writeBoolean(allowInsecure);
         output.writeString(echConfig);
+        output.writeInt(idleSessionCheckInterval);
+        output.writeInt(idleSessionTimeout);
+        output.writeInt(minIdleSession);
+        output.writeString(clientMetadata);
     }
 
     @Override
@@ -72,6 +86,12 @@ public class AnyTLSBean extends AbstractBean {
         utlsFingerprint = input.readString();
         allowInsecure = input.readBoolean();
         echConfig = input.readString();
+        if (version >= 1) {
+            idleSessionCheckInterval = input.readInt();
+            idleSessionTimeout = input.readInt();
+            minIdleSession = input.readInt();
+            clientMetadata = input.readString();
+        }
     }
 
     @NotNull

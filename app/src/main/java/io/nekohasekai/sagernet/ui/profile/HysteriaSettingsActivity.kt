@@ -41,6 +41,10 @@ class HysteriaSettingsActivity : ProfileSettingsActivity<HysteriaBean>() {
         DataStore.serverObfsType = obfsType
         DataStore.serverObfsGeckoMinPacketSize = obfsGeckoMinPacketSize
         DataStore.serverObfsGeckoMaxPacketSize = obfsGeckoMaxPacketSize
+        DataStore.serverQuicIdleTimeout = quicIdleTimeout
+        DataStore.serverQuicKeepAlivePeriod = quicKeepAlivePeriod
+        DataStore.serverQuicMaxConcurrentStreams = quicMaxConcurrentStreams
+        DataStore.serverQuicInitialPacketSize = quicInitialPacketSize
     }
 
     override fun HysteriaBean.serialize() {
@@ -68,6 +72,10 @@ class HysteriaSettingsActivity : ProfileSettingsActivity<HysteriaBean>() {
         obfsType = DataStore.serverObfsType
         obfsGeckoMinPacketSize = DataStore.serverObfsGeckoMinPacketSize
         obfsGeckoMaxPacketSize = DataStore.serverObfsGeckoMaxPacketSize
+        quicIdleTimeout = DataStore.serverQuicIdleTimeout
+        quicKeepAlivePeriod = DataStore.serverQuicKeepAlivePeriod
+        quicMaxConcurrentStreams = DataStore.serverQuicMaxConcurrentStreams
+        quicInitialPacketSize = DataStore.serverQuicInitialPacketSize
     }
 
     override fun PreferenceFragmentCompat.createPreferences(
@@ -93,6 +101,12 @@ class HysteriaSettingsActivity : ProfileSettingsActivity<HysteriaBean>() {
         val obfsGeckoMax = findPreference<EditTextPreference>(Key.SERVER_OBFS_GECKO_MAX_PACKET_SIZE)!!
         val bbrProfile = findPreference<SimpleMenuPreference>(Key.SERVER_BBR_PROFILE)!!
         val disableChromeParrot = findPreference<SwitchPreference>(Key.SERVER_DISABLE_CHROME_PARROT)!!
+        val quicIdleTimeout = findPreference<EditTextPreference>(Key.SERVER_QUIC_IDLE_TIMEOUT)!!
+        val quicKeepAlivePeriod = findPreference<EditTextPreference>(Key.SERVER_QUIC_KEEP_ALIVE_PERIOD)!!
+        val quicMaxConcurrentStreams =
+            findPreference<EditTextPreference>(Key.SERVER_QUIC_MAX_CONCURRENT_STREAMS)!!
+        val quicInitialPacketSize =
+            findPreference<EditTextPreference>(Key.SERVER_QUIC_INITIAL_PACKET_SIZE)!!
 
         fun updateObfsType(type: String?) {
             val isGecko = type == "gecko"
@@ -114,12 +128,16 @@ class HysteriaSettingsActivity : ProfileSettingsActivity<HysteriaBean>() {
                 protocol.isVisible = false
                 alpn.isVisible = false
                 //
+                // vload: sing-box 1.14.0 gave Hysteria2 the same
+                // stream/connection receive window and path-MTU-discovery
+                // knobs (via the new unified QUICOptions) - keep them
+                // visible for v2 too, not just v1.
                 findPreference<EditTextPreference>(Key.SERVER_STREAM_RECEIVE_WINDOW)!!.isVisible =
-                    false
+                    true
                 findPreference<EditTextPreference>(Key.SERVER_CONNECTION_RECEIVE_WINDOW)!!.isVisible =
-                    false
+                    true
                 findPreference<SwitchPreference>(Key.SERVER_DISABLE_MTU_DISCOVERY)!!.isVisible =
-                    false
+                    true
                 //
                 authPayload.title = resources.getString(R.string.password)
                 //
@@ -127,6 +145,10 @@ class HysteriaSettingsActivity : ProfileSettingsActivity<HysteriaBean>() {
                 obfsType.isVisible = true
                 bbrProfile.isVisible = true
                 disableChromeParrot.isVisible = true
+                quicIdleTimeout.isVisible = true
+                quicKeepAlivePeriod.isVisible = true
+                quicMaxConcurrentStreams.isVisible = true
+                quicInitialPacketSize.isVisible = true
                 updateObfsType(obfsType.value)
             } else {
                 authType.isVisible = true
@@ -149,6 +171,10 @@ class HysteriaSettingsActivity : ProfileSettingsActivity<HysteriaBean>() {
                 obfsGeckoMax.isVisible = false
                 bbrProfile.isVisible = false
                 disableChromeParrot.isVisible = false
+                quicIdleTimeout.isVisible = false
+                quicKeepAlivePeriod.isVisible = false
+                quicMaxConcurrentStreams.isVisible = false
+                quicInitialPacketSize.isVisible = false
             }
         }
         findPreference<SimpleMenuPreference>(Key.PROTOCOL_VERSION)!!.setOnPreferenceChangeListener { _, newValue ->
@@ -183,6 +209,10 @@ class HysteriaSettingsActivity : ProfileSettingsActivity<HysteriaBean>() {
         hopIntervalMax.setOnBindEditTextListener(EditTextPreferenceModifiers.Number)
         obfsGeckoMin.setOnBindEditTextListener(EditTextPreferenceModifiers.Number)
         obfsGeckoMax.setOnBindEditTextListener(EditTextPreferenceModifiers.Number)
+        quicIdleTimeout.setOnBindEditTextListener(EditTextPreferenceModifiers.Number)
+        quicKeepAlivePeriod.setOnBindEditTextListener(EditTextPreferenceModifiers.Number)
+        quicMaxConcurrentStreams.setOnBindEditTextListener(EditTextPreferenceModifiers.Number)
+        quicInitialPacketSize.setOnBindEditTextListener(EditTextPreferenceModifiers.Number)
     }
 
 }

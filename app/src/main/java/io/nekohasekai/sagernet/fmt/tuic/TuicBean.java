@@ -33,6 +33,15 @@ public class TuicBean extends AbstractBean {
     public Integer protocolVersion;
     public String uuid;
 
+    // vload: sing-box 1.14.0 unified QUIC options (also apply to Hysteria2)
+    public Integer quicIdleTimeout;
+    public Integer quicKeepAlivePeriod;
+    public Integer quicStreamReceiveWindow;
+    public Integer quicConnectionReceiveWindow;
+    public Integer quicMaxConcurrentStreams;
+    public Integer quicInitialPacketSize;
+    public Boolean quicDisablePathMtuDiscovery;
+
     @Override
     public void initializeDefaultValues() {
         super.initializeDefaultValues();
@@ -50,11 +59,18 @@ public class TuicBean extends AbstractBean {
         if (customJSON == null) customJSON = "";
         if (protocolVersion == null) protocolVersion = 5;
         if (uuid == null) uuid = "";
+        if (quicIdleTimeout == null) quicIdleTimeout = 0;
+        if (quicKeepAlivePeriod == null) quicKeepAlivePeriod = 0;
+        if (quicStreamReceiveWindow == null) quicStreamReceiveWindow = 0;
+        if (quicConnectionReceiveWindow == null) quicConnectionReceiveWindow = 0;
+        if (quicMaxConcurrentStreams == null) quicMaxConcurrentStreams = 0;
+        if (quicInitialPacketSize == null) quicInitialPacketSize = 0;
+        if (quicDisablePathMtuDiscovery == null) quicDisablePathMtuDiscovery = false;
     }
 
     @Override
     public void serialize(ByteBufferOutput output) {
-        output.writeInt(2);
+        output.writeInt(3);
         super.serialize(output);
         output.writeString(token);
         output.writeString(caText);
@@ -70,6 +86,13 @@ public class TuicBean extends AbstractBean {
         output.writeString(customJSON);
         output.writeInt(protocolVersion);
         output.writeString(uuid);
+        output.writeInt(quicIdleTimeout);
+        output.writeInt(quicKeepAlivePeriod);
+        output.writeInt(quicStreamReceiveWindow);
+        output.writeInt(quicConnectionReceiveWindow);
+        output.writeInt(quicMaxConcurrentStreams);
+        output.writeInt(quicInitialPacketSize);
+        output.writeBoolean(quicDisablePathMtuDiscovery);
     }
 
     @Override
@@ -95,6 +118,15 @@ public class TuicBean extends AbstractBean {
             uuid = input.readString();
         } else {
             protocolVersion = 4;
+        }
+        if (version >= 3) {
+            quicIdleTimeout = input.readInt();
+            quicKeepAlivePeriod = input.readInt();
+            quicStreamReceiveWindow = input.readInt();
+            quicConnectionReceiveWindow = input.readInt();
+            quicMaxConcurrentStreams = input.readInt();
+            quicInitialPacketSize = input.readInt();
+            quicDisablePathMtuDiscovery = input.readBoolean();
         }
     }
 
