@@ -361,6 +361,14 @@ data class ProxyEntity(
                 // and made a network handover on this connection take every
                 // multiplexed stream down with it at once.
                 max_connections = vmessBean!!.muxConcurrency
+                // vload: tried raising this to reduce fresh mux handshakes
+                // during browsing bursts (see git history) - confirmed
+                // on-device to make real-world performance worse, not
+                // better: packing many more concurrent streams onto far
+                // fewer real TCP connections means one connection's
+                // congestion/loss head-of-line-blocks every stream sharing
+                // it, which hurt more than the saved handshakes helped.
+                // Reverted to the original value.
                 min_streams = 4
                 protocol = when (vmessBean!!.muxType) {
                     1 -> "smux"
