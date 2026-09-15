@@ -981,17 +981,35 @@ fun buildConfig(
                     inbound = listOf("tun-in")
                     server = "dns-fake"
                     disable_cache = true
-                    // vload: short-circuits the same staleness problem
-                    // cache_file/store_fakeip used to solve (see the
-                    // comment on ExperimentalOptions above) without any
-                    // disk persistence. A fake-ip answer is synthesized
-                    // locally with no real network round trip, so handing
-                    // it out with only a few seconds of TTL costs nothing -
-                    // it just makes every client re-resolve often enough
-                    // that a stale mapping from before a VPN restart can't
-                    // survive for more than a few seconds before being
-                    // replaced with a current one.
-                    rewrite_ttl = 10
+                    // vload: no rewrite_ttl override - let fakeip answers use
+                    // sing-box's own default (C.DefaultDNSTTL, 600s). This
+                    // matches v1.4.21 (the last build before the sing-box
+                    // 1.14.0 port), which never had a TTL override at all and
+                    // was confirmed stable/fast in normal use.
+                    //
+                    // A short rewrite_ttl was tried instead (10s, then 4s) to
+                    // close the window where a client can dial a stale
+                    // pre-restart fake IP against a now-empty post-restart
+                    // fakeip table ("router: missing fakeip record"). But
+                    // that failure mode is gated by restart frequency, not
+                    // TTL length - sing-box's in-memory fakeip store
+                    // (dns/transport/fakeip/memory.go) is a plain unbounded
+                    // map with no eviction under load, so the mapping can
+                    // only be lost by an actual core restart wiping the
+                    // table, never by normal browsing volume. In everyday
+                    // use restarts are rare, so the exposure window rarely
+                    // matters - we only hit it during this session by
+                    // deliberately hammering rapid restarts via repeated
+                    // settings toggles for testing. A short TTL forces
+                    // constant unnecessary re-resolution to guard against an
+                    // edge case that a long TTL essentially never triggers in
+                    // practice, which likely explains the felt slowdown
+                    // since the 1.14.0 port. Trading back to the default: no
+                    // worse in practice than what was already stable, and
+                    // faster (fewer DNS round trips) the rest of the time.
+                    // Full elimination of the restart-window gap needs disk
+                    // persistence (cache_file), which was deliberately left
+                    // off (see the comment on ExperimentalOptions above).
                 })
             }
             // avoid loopback
