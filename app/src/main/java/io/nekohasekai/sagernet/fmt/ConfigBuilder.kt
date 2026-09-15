@@ -921,7 +921,23 @@ fun buildConfig(
                     type = "fakeip"
                     tag = "dns-fake"
                     inet4_range = "198.18.0.0/15"
-                    inet6_range = "fc00::/18"
+                    // vload: only hand out fake IPv6 addresses when the TUN
+                    // interface actually carries IPv6 (see the "address"
+                    // field below, gated the same way). Regression from the
+                    // 1.14.0 port: the old fakeip config had a
+                    // strategy="ipv4_only" field constraining this, but that
+                    // field doesn't exist on the new inline fakeip DNS
+                    // server schema - dropping it during the port silently
+                    // made fakeip hand out unconditionally-unreachable fake
+                    // IPv6 addresses (fc00::/18) whenever ipv6Mode was
+                    // DISABLE, which every AAAA-preferring/Happy-Eyeballs
+                    // connection then had to time out on before falling
+                    // back to the working IPv4 fake address - exactly the
+                    // kind of intermittent slow/unstable behavior a user
+                    // would see across ordinary browsing.
+                    if (ipv6Mode != IPv6Mode.DISABLE) {
+                        inet6_range = "fc00::/18"
+                    }
                 })
                 dns.rules.add(DNSRule_DefaultOptions().apply {
                     inbound = listOf("tun-in")
