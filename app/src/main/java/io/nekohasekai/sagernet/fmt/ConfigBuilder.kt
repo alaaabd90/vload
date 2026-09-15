@@ -188,20 +188,22 @@ fun buildConfig(
                 external_controller = "127.0.0.1:9090"
                 external_ui = "../files/yacd"
             }
-            // vload: fake-ip mappings live only in memory without this, and
-            // sing-box's own in-memory fake-ip store can evict/lose a
-            // mapping under normal use - any outbound connection dialed
-            // afterward against that now-unmapped fake IP fails outright
-            // ("router: missing fakeip record"), not just a slow/degraded
-            // request. store_fakeip persists exactly that mapping to
-            // survive it; store_dns is deliberately left off so real DNS
-            // answers still aren't cached, matching the existing
-            // disable_cache=true on every DNS rule above.
-            if (useFakeDns) cache_file = CacheFile().apply {
-                enabled = true
-                store_fakeip = true
-                path = "../files/cache.db"
-            }
+            // vload: previously persisted fake-ip mappings to disk here
+            // (cache_file/store_fakeip) because the process's in-memory
+            // table doesn't survive a VPN restart, and a client still
+            // holding a since-forgotten fake IP got a hard "missing fakeip
+            // record" failure. That disk cache brought its own real cost
+            // (async writes and lock contention on every newly-seen
+            // domain) for a benefit that turned out to be replaceable: the
+            // fake-ip DNS rule below now hands out a short rewrite_ttl
+            // instead. A synthesized fake-ip answer costs nothing to
+            // reissue (no real network round trip, just a local map
+            // lookup/allocation), so a short TTL makes every client
+            // re-resolve within seconds rather than holding a stale
+            // mapping for the normal ~10 minutes - closing the same
+            // post-restart staleness window cache_file was added for,
+            // without any disk I/O at all. Pure in-memory, matching how
+            // this worked before cache_file existed.
         }
 
         log = LogOptions().apply {
@@ -979,6 +981,17 @@ fun buildConfig(
                     inbound = listOf("tun-in")
                     server = "dns-fake"
                     disable_cache = true
+                    // vload: short-circuits the same staleness problem
+                    // cache_file/store_fakeip used to solve (see the
+                    // comment on ExperimentalOptions above) without any
+                    // disk persistence. A fake-ip answer is synthesized
+                    // locally with no real network round trip, so handing
+                    // it out with only a few seconds of TTL costs nothing -
+                    // it just makes every client re-resolve often enough
+                    // that a stale mapping from before a VPN restart can't
+                    // survive for more than a few seconds before being
+                    // replaced with a current one.
+                    rewrite_ttl = 10
                 })
             }
             // avoid loopback

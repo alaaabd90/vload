@@ -737,8 +737,20 @@ fun buildSingBoxOutboundTLS(bean: StandardV2RayBean): OutboundTLSOptions? {
                 public_key = bean.realityPubKey
                 short_id = bean.realityShortId
             }
-            if (fp.isNullOrBlank()) fp = "chrome"
         }
+        // vload: previously only Reality profiles defaulted an unset
+        // fingerprint to "chrome" - a plain TLS profile with no fingerprint
+        // explicitly configured got no utls block at all, so its ClientHello
+        // came from Go's own crypto/tls stack instead of mimicking a real
+        // browser. That's a distinctive, well-known fingerprint (JA3/JA4)
+        // that's trivially distinguishable from Chrome/Firefox traffic -
+        // exactly the kind of signal an origin's bot/abuse detection (e.g.
+        // Google, which is where this surfaced as repeated "verify you're
+        // not a robot" challenges) can act on directly, independent of any
+        // connection-level behavior. Defaulting every TLS connection to a
+        // real browser's fingerprint, not just Reality ones, closes that
+        // gap without requiring per-profile configuration.
+        if (fp.isNullOrBlank()) fp = "chrome"
         if (fp.isNotBlank()) {
             utls = OutboundUTLSOptions().apply {
                 enabled = true
