@@ -33,11 +33,23 @@ sealed class NetworkSelector {
 class VloadNetworkController(
     private val onSlotChanged: (slot: Int, network: Network?) -> Unit,
 ) {
+    companion object {
+        // How long to wait for a slot's requested network to show up before
+        // treating it as genuinely unavailable rather than just slow to
+        // register - see the comment in start() for why this exists at all.
+        // Long enough that a normal boot/VPN-start registration delay never
+        // trips it, short enough that a slot with no real signal (no SIM
+        // service, airplane mode on one radio, etc.) stops being hedged to
+        // well before a user has started actively browsing.
+        private const val SLOT_UNAVAILABLE_TIMEOUT_MS = 8000L
+    }
+
     private val connectivity get() = SagerNet.connectivity
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val callbacks = arrayOfNulls<ConnectivityManager.NetworkCallback>(2)
     private val networks = arrayOfNulls<Network>(2)
+    private val unavailableTimeouts = arrayOfNulls<Runnable>(2)
 
     fun networkFor(slot: Int): Network? = networks.getOrNull(slot)
 
@@ -79,10 +91,48 @@ class VloadNetworkController(
         } catch (e: Exception) {
             Logs.w(e)
             callbacks[slot] = null
+            return
         }
+
+        // requestNetwork(request, callback) - the no-timeout overload - never
+        // calls onUnavailable(): that callback only exists on the separate
+        // timeout overload, and using it would have the OS auto-unregister
+        // this request the moment it fires, so a SIM that later regains
+        // signal would never be seen again. If the requested network simply
+        // never existed to begin with (no signal, not registered on this
+        // subscription right now) neither onAvailable, onLost, nor anything
+        // else ever fires on this callback - onLost only fires for a network
+        // that WAS delivered and then went away. Weighted.UpdateAvailability
+        // is only ever called from onSlotChanged, so a slot whose network
+        // was never available even once stayed marked available (the
+        // picker's default) forever, with no signal to the contrary.
+        //
+        // Confirmed live: with only Wi-Fi actually reachable, the SIM slot's
+        // callback never fired at all, so the weighted group kept picking
+        // and hedging to it as if it were a real second path - both slots
+        // ended up resolving to the same Wi-Fi route underneath, so hedging
+        // sent duplicate near-simultaneous connections (confirmed for
+        // accounts.google.com) to origins that read that pattern as
+        // suspicious/automated traffic and started demanding a CAPTCHA.
+        //
+        // This local timeout runs independently of the real registration
+        // above: if onAvailable hasn't fired within it, mark the slot down
+        // for now. It does not touch or invalidate the underlying request,
+        // so a genuine onAvailable arriving later - the SIM regaining signal
+        // - still fires normally and immediately restores the slot, exactly
+        // like any other network-recovery case this controller handles.
+        val timeoutRunnable = Runnable {
+            if (networks[slot] == null) {
+                onSlotChanged(slot, null)
+            }
+        }
+        unavailableTimeouts[slot] = timeoutRunnable
+        mainHandler.postDelayed(timeoutRunnable, SLOT_UNAVAILABLE_TIMEOUT_MS)
     }
 
     fun stop(slot: Int) {
+        unavailableTimeouts[slot]?.let { mainHandler.removeCallbacks(it) }
+        unavailableTimeouts[slot] = null
         callbacks[slot]?.let {
             try {
                 connectivity.unregisterNetworkCallback(it)

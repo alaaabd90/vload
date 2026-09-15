@@ -907,6 +907,28 @@ fun buildConfig(
                         outbound = TAG_QUIC_PROXY
                     })
                 }
+                // sing-box hardcodes a 30s idle timeout for any UDP flow it
+                // classifies as QUIC (constant.ProtocolTimeouts), applied by
+                // port number alone (443 -> "quic") independent of sniffing
+                // confirming it. Fake-ip routes virtually all modern UDP
+                // HTTPS traffic - video included - through this exact path,
+                // and 30s is short enough that an ordinary pause (reading a
+                // comment, buffering ahead) outlives it: the flow gets torn
+                // down and has to fully re-establish, which is where a
+                // real stall comes from, not the teardown itself. Confirmed
+                // on-device: the vast majority of UDP flows in a real
+                // browsing/video session closed within a few seconds of the
+                // 30s mark specifically. Every other UDP flow this router
+                // doesn't specifically classify already gets a 5-minute
+                // default (constant.UDPTimeout) with no reported issue, so
+                // matching QUIC to that same already-proven value removes
+                // the special-cased short timeout rather than picking a new
+                // number to guess at.
+                route.rules.add(Rule_DefaultOptions().apply {
+                    protocol = listOf("quic")
+                    action = "route-options"
+                    _hack_config_map["udp_timeout"] = "5m"
+                })
             }
             // built-in DNS rules
             route.rules.add(0, Rule_DefaultOptions().apply {
