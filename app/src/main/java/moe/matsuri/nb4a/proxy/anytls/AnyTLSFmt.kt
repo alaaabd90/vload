@@ -27,11 +27,14 @@ fun buildSingBoxOutboundAnyTLSBean(bean: AnyTLSBean): SingBoxOptions.Outbound_An
             bean.certificates.blankAsNull()?.let {
                 certificate = it
             }
-            bean.utlsFingerprint.blankAsNull()?.let {
-                utls = SingBoxOptions.OutboundUTLSOptions().apply {
-                    enabled = true
-                    fingerprint = it
-                }
+            // vload: defaults to Chrome's fingerprint when unset, matching
+            // the same fix in V2RayFmt.kt's buildSingBoxOutboundTLS - an
+            // unset fingerprint here left the ClientHello on Go's own
+            // crypto/tls stack, which is trivially distinguishable from a
+            // real browser (JA3/JA4) by any origin's bot/abuse detection.
+            utls = SingBoxOptions.OutboundUTLSOptions().apply {
+                enabled = true
+                fingerprint = bean.utlsFingerprint.blankAsNull() ?: "chrome"
             }
             bean.echConfig.blankAsNull()?.let {
                 // In new version, some complex options will be deprecated, so we just do this.
