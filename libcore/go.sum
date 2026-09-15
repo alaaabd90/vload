@@ -8,6 +8,8 @@ github.com/RyuaNerin/testingutil v0.1.0 h1:IYT6JL57RV3U2ml3dLHZsVtPOP6yNK7WUVdzz
 github.com/RyuaNerin/testingutil v0.1.0/go.mod h1:yTqj6Ta/ycHMPJHRyO12Mz3VrvTloWOsy23WOZH19AA=
 github.com/ajg/form v1.5.1 h1:t9c7v8JUKu/XxOGBU0yjNpaMloxGEJhUkqFRq0ibGeU=
 github.com/ajg/form v1.5.1/go.mod h1:uL1WgH+h2mgNtvBq0339dVnzXdBETtL2LeUXaIv25UY=
+github.com/alaaabd90/sing-mux-vload v0.3.7-0.20260915182522-93ee9efae307 h1:QNlrj0eHAjYXoYSfbJuagFwHdI2NmZItnVyynSAfYPY=
+github.com/alaaabd90/sing-mux-vload v0.3.7-0.20260915182522-93ee9efae307/go.mod h1:QvlKMyNBNrQoyX4x+gq028uPbLM2XeRpWtDsWBJbFSk=
 github.com/anchore/go-lzo v0.1.0 h1:NgAacnzqPeGH49Ky19QKLBZEuFRqtTG9cdaucc3Vncs=
 github.com/anchore/go-lzo v0.1.0/go.mod h1:3kLx0bve2oN1iDwgM1U5zGku1Tfbdb0No5qp1eL1fIk=
 github.com/andybalholm/brotli v1.1.0 h1:eLKJA0d02Lf0mVpIDgYnqXcUn0GqVmEFny3VuID1U3M=
@@ -163,8 +165,6 @@ github.com/sagernet/sing v0.9.5-0.20260914135810-80bfa92a0607 h1:YzA14QltKgRqFKE
 github.com/sagernet/sing v0.9.5-0.20260914135810-80bfa92a0607/go.mod h1:K3Owt3xPhHugvlnlPPxZJ/exXdaJfEPOTNorGk4AXjo=
 github.com/sagernet/sing-anytls v0.0.0-20260904135308-cec2d74334be h1:0uMXu8kcJU0XLc2vfjGH6q6khmECCc5WYpD9dqlu1Xg=
 github.com/sagernet/sing-anytls v0.0.0-20260904135308-cec2d74334be/go.mod h1:VRKLnj0ObEsN228h+zuzf91p+6sjtYE8SBaLPVsBy5o=
-github.com/sagernet/sing-mux v0.3.7-0.20260905054442-91d1502591ce h1:ay1pGbzMF4e7iggj+uESNhwMNPbZZajDghcdC4P92Dc=
-github.com/sagernet/sing-mux v0.3.7-0.20260905054442-91d1502591ce/go.mod h1:QvlKMyNBNrQoyX4x+gq028uPbLM2XeRpWtDsWBJbFSk=
 github.com/sagernet/sing-openconnect v0.0.0-20260903200519-8b89c968949d h1:Jt/Tb0boIr/xRr4sWr2vC/rrVlYNoumZITLEQpqZ8UE=
 github.com/sagernet/sing-openconnect v0.0.0-20260903200519-8b89c968949d/go.mod h1:4AKZLVcvY3r54UaK2Gbnm7aN8pOwdLz+y4EP0QFZ5Eg=
 github.com/sagernet/sing-openvpn v0.0.0-20260903200517-e060dda5b1f1 h1:Zn7+pNY5mX1e4DO8oKhTHz5sxqUKNdCWKbfZUtM26Qg=
