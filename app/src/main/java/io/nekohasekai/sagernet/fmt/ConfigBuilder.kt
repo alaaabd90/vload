@@ -183,10 +183,24 @@ fun buildConfig(
     }
 
     return MyOptions().apply {
-        if (!forTest && DataStore.enableClashAPI) experimental = ExperimentalOptions().apply {
-            clash_api = ClashAPIOptions().apply {
+        if (!forTest) experimental = ExperimentalOptions().apply {
+            if (DataStore.enableClashAPI) clash_api = ClashAPIOptions().apply {
                 external_controller = "127.0.0.1:9090"
                 external_ui = "../files/yacd"
+            }
+            // vload: fake-ip mappings live only in memory without this, and
+            // sing-box's own in-memory fake-ip store can evict/lose a
+            // mapping under normal use - any outbound connection dialed
+            // afterward against that now-unmapped fake IP fails outright
+            // ("router: missing fakeip record"), not just a slow/degraded
+            // request. store_fakeip persists exactly that mapping to
+            // survive it; store_dns is deliberately left off so real DNS
+            // answers still aren't cached, matching the existing
+            // disable_cache=true on every DNS rule above.
+            if (useFakeDns) cache_file = CacheFile().apply {
+                enabled = true
+                store_fakeip = true
+                path = "../files/cache.db"
             }
         }
 
