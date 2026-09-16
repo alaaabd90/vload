@@ -173,14 +173,6 @@ func (w *boxPlatformInterfaceWrapper) CreateBridge(options adapter.BridgeOptions
 	return nil, E.New("not implemented")
 }
 
-func (w *boxPlatformInterfaceWrapper) UsePlatformAutoRedirect() bool {
-	return false
-}
-
-func (w *boxPlatformInterfaceWrapper) CreateAutoRedirect(options adapter.AutoRedirectOptions) (adapter.AutoRedirectSession, error) {
-	return nil, E.New("not implemented")
-}
-
 func (s *boxPlatformInterfaceWrapper) SystemCertificates() []string {
 	return nil
 }
@@ -237,7 +229,7 @@ func (w *boxPlatformInterfaceWrapper) FindConnectionOwner(request *adapter.FindC
 	if packageName != "" {
 		packageNames = []string{packageName}
 	}
-	return &adapter.ConnectionOwner{UserId: uid, PackageNames: packageNames}, nil
+	return &adapter.ConnectionOwner{UserId: uid, AndroidPackageNames: packageNames}, nil
 }
 
 // io.Writer
