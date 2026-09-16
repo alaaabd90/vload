@@ -106,7 +106,18 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     // that install through the removed proxy path).
     val serviceMode: String get() = Key.MODE_VPN
 
+    // vload: trafficSniffing has a 4th value (3) beyond upstream's own
+    // Off/routing/destination - "Static QUIC Port Match" (see
+    // ConfigBuilder.kt). It's mutually exclusive with the other two
+    // non-off modes by design, at the user's explicit request: selecting
+    // it identifies QUIC/HTTP3 traffic by network=udp+port=443 instead of
+    // sniffing for it, and does NOT also run the general sniff rule -
+    // selecting "Sniff result for routing/destination" instead goes back
+    // to sing-box's original sniff-based QUIC handling, hang risk and all.
     var trafficSniffing by configurationStore.stringToInt(Key.TRAFFIC_SNIFFING) { 1 }
+    val needSniff get() = trafficSniffing == 1 || trafficSniffing == 2
+    val quicPortMatch get() = trafficSniffing == 3
+
     var resolveDestination by configurationStore.boolean(Key.RESOLVE_DESTINATION)
 
     var mtu by configurationStore.stringToInt(Key.MTU) { 9000 }

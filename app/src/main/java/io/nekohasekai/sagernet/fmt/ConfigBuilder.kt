@@ -168,7 +168,19 @@ fun buildConfig(
         .mapNotNull { dns -> dns.trim().takeIf { it.isNotBlank() && !it.startsWith("#") } }
     val enableDnsRouting = DataStore.enableDnsRouting
     val useFakeDns = DataStore.enableFakeDns && !forTest
-    val needSniff = DataStore.trafficSniffing > 0
+    // vload: "Static QUIC Port Match" mode (trafficSniffing==3) deliberately
+    // runs no general sniffing when fake-ip is on, since fake-ip already
+    // gives the router a flow's domain via reverse lookup - the router
+    // never needed sniffing for that in the first place. But without
+    // fake-ip, an IP-literal connection has no domain at all unless
+    // something sniffs the TLS SNI/HTTP Host for it, so a custom
+    // domain-based routing rule would silently stop matching in that
+    // specific combination. Falling back to sniffing here when fake-ip is
+    // off preserves that correctness - safe to do now that sing-box-vload's
+    // sniff retry loop is capped (see singleSniffMaxAttempts in
+    // route/route.go), so this fallback can't reintroduce the unbounded
+    // hang risk this mode exists to avoid in the first place.
+    val needSniff = DataStore.needSniff || (DataStore.quicPortMatch && !useFakeDns)
     val externalIndexMap = ArrayList<IndexEntity>()
     val ipv6Mode = if (forTest) IPv6Mode.ENABLE else DataStore.ipv6Mode
 
@@ -883,16 +895,76 @@ fun buildConfig(
                     inbound = sniffInboundTags
                     action = "sniff"
                 })
-                // Must be appended (not add(0, ...)) so it lands after the
-                // sniff rule above in evaluation order - protocol="quic"
-                // only matches once sniffing has actually classified the
-                // flow. See TAG_QUIC_PROXY.
+            }
+            // vload: "Static QUIC Port Match" (Settings > Route Settings >
+            // Enable Traffic Sniffing > "Static QUIC Port Match", the 4th
+            // value of that same dropdown) - identifies QUIC/HTTP3 traffic
+            // by network=udp + port=443 instead of sniffing for it. This
+            // replaces an earlier protocol="quic" approach that required the
+            // sniff rule above to run first and positively classify the flow
+            // before either rule below could match.
+            //
+            // That sniff-based approach turned out to be the actual source
+            // of the reels/fast-scrolling hang, not a fix for it: sing-box's
+            // UDP sniff path (route/route.go) waits up to 300ms per packet
+            // for a QUIC client hello to complete, and - confirmed by
+            // reading the loop directly - retried that wait indefinitely on
+            // timeout with no cap of its own, bounded only by the whole VPN
+            // session's lifetime. Fast-scrolling through short video clips
+            // abandons a QUIC flow mid-handshake on every single clip
+            // scrolled past, so every one of those was leaking a retrying
+            // read loop for the rest of the session. Scoping the sniff rule
+            // more narrowly (an earlier attempt) only reduced how much
+            // *other* traffic entered that same broken path - it didn't fix
+            // the path itself, which is why it measured worse, not better.
+            //
+            // Matching on port+network instead needs no classification step
+            // at all: the rule below is evaluated the instant a flow's
+            // destination is known, with zero wait and nothing to retry.
+            // Virtually all real-world QUIC/HTTP3 traffic - the traffic
+            // these two rules exist for - runs on UDP/443, so this is just
+            // as accurate in practice while removing the entire hang
+            // mechanism. The tradeoff: a small amount of non-QUIC UDP
+            // traffic that happens to use port 443 would also match: for
+            // the Load Balance rule that just means it takes the
+            // single-path QUIC group instead of the dual-path one, and for
+            // the timeout rule it just gets 90s instead of the default 5m -
+            // both harmless. Both rules are gated on trafficSniffing==3
+            // (DataStore.quicPortMatch) rather than needSniff, and moved
+            // out of that block entirely - selecting "Sniff result for
+            // routing" or "destination" instead does NOT also apply these,
+            // by explicit design: those two modes go back to sing-box's
+            // original sniff-based QUIC handling (hang risk included),
+            // since the whole point of this being its own dropdown value
+            // is to let it be picked deliberately instead of silently
+            // layered under every other mode.
+            if (DataStore.quicPortMatch) {
                 if (proxy.type == ProxyEntity.TYPE_LOAD_BALANCE) {
                     route.rules.add(Rule_DefaultOptions().apply {
-                        protocol = listOf("quic")
+                        network = listOf("udp")
+                        port = listOf(443)
                         outbound = TAG_QUIC_PROXY
                     })
                 }
+                // sing-box hardcodes a 30s idle timeout for any UDP flow it
+                // classifies as QUIC (constant.ProtocolTimeouts), separate
+                // from the 5-minute default every other UDP flow gets
+                // (constant.UDPTimeout). Fake-ip routes virtually all modern
+                // UDP HTTPS traffic - video included - through this exact
+                // path, and 30s is short enough that an ordinary pause
+                // (reading a page, buffering ahead) outlives it: the flow
+                // gets torn down and has to fully re-establish, which is
+                // where a real stall comes from, not the teardown itself.
+                // 90s comfortably covers a normal pause while staying well
+                // short of the full 5-minute default, so an abandoned flow
+                // (fast scrolling) still clears out reasonably quickly
+                // rather than accumulating for the rest of the session.
+                route.rules.add(Rule_DefaultOptions().apply {
+                    network = listOf("udp")
+                    port = listOf(443)
+                    action = "route-options"
+                    _hack_config_map["udp_timeout"] = "90s"
+                })
             }
             // built-in DNS rules
             route.rules.add(0, Rule_DefaultOptions().apply {

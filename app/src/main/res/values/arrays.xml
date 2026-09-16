@@ -528,6 +528,7 @@
         <item>@string/off</item>
         <item>@string/sniff_routing</item>
         <item>@string/sniff_override</item>
+        <item>@string/quic_port_match</item>
     </string-array>
 
     <string-array name="snell_version">
