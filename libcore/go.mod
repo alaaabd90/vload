@@ -111,5 +111,3 @@ require (
 replace github.com/matsuridayo/libneko => ../../libneko
 
 replace github.com/sagernet/sing-box => ../../sing-box
-
-replace github.com/sagernet/sing-mux => github.com/alaaabd90/sing-mux-vload v0.3.7-0.20260915182522-93ee9efae307
