@@ -82,7 +82,7 @@ require (
 	github.com/sagernet/sing-usbip v0.0.0-20260817040617-28bd42667eca // indirect
 	github.com/sagernet/sing-vmess v0.2.8 // indirect
 	github.com/sagernet/smux v1.5.50-sing-box-mod.1 // indirect
-	github.com/sagernet/wireguard-go v0.0.6 // indirect
+	github.com/sagernet/wireguard-go v0.0.7 // indirect
 	github.com/sagernet/ws v0.0.0-20231204124109-acfe8907c854 // indirect
 	github.com/smallstep/pkcs7 v0.1.1 // indirect
 	github.com/tjfoc/gmsm v1.4.1 // indirect
