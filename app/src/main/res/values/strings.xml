@@ -241,6 +241,7 @@
     <string name="load_balance_wifi" translatable="false">Wi-Fi</string>
     <string name="load_balance_sim">SIM</string>
     <string name="load_balance_profile">Profile</string>
+    <string name="action_export_unlocked">Export to file (.vload)</string>
     <string name="action_export_locked">Export locked to device…</string>
     <string name="export_locked_message">Enter the target device\'s HWID (Settings → Device HWID). The exported file will only import on that device.</string>
     <string name="export_locked_hwid_hint">e.g. 1C3B71B27C060501786884BCCF3BA05B</string>

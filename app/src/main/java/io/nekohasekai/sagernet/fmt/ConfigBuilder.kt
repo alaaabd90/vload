@@ -216,7 +216,13 @@ fun buildConfig(
         dns = DNSOptions().apply {
             servers = mutableListOf()
             rules = mutableListOf()
-            independent_cache = true
+            // vload: independent_cache deprecated in sing-box 1.14.0 - "the
+            // DNS cache now always keys by transport name, making
+            // independent_cache unnecessary" (migration guide says to just
+            // remove it). Its own docs say it "will slightly degrade
+            // performance" when on, so leaving it set was actively paying
+            // for a benefit the new DNS server model already gives for
+            // free - not just a leftover no-op.
         }
 
         fun autoDnsDomainStrategy(s: String): String? {

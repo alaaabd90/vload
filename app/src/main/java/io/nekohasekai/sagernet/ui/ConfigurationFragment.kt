@@ -1766,6 +1766,12 @@ class ConfigurationFragment @JvmOverloads constructor(
                             )
                         }
 
+                        R.id.action_standard_export_file -> {
+                            val fragment = parentFragment as ConfigurationFragment
+                            fragment.pendingUnlockedExport = entity.toStdLink()
+                            startFilesForResult(fragment.exportUnlockedConfig, "$currentName.vload")
+                        }
+
                         R.id.action_config_export_locked -> {
                             (parentFragment as ConfigurationFragment).promptExportLocked(entity)
                         }
@@ -1801,6 +1807,38 @@ class ConfigurationFragment @JvmOverloads constructor(
                         }
                     }
 
+                }
+            }
+        }
+
+    // vload: plain (unlocked) .vload export - the same shareable link
+    // action_standard_clipboard/action_standard_qr already use
+    // (entity.toStdLink()), just saved to a file instead of the clipboard.
+    // No HWID/device binding at all, so it imports on any device/after any
+    // reinstall - the counterpart to the locked export below, for people
+    // who want a portable backup rather than a device-locked one.
+    private var pendingUnlockedExport: String? = null
+
+    private val exportUnlockedConfig =
+        registerForActivityResult(ActivityResultContracts.CreateDocument()) { data ->
+            val link = pendingUnlockedExport
+            if (data != null && link != null) {
+                runOnDefaultDispatcher {
+                    try {
+                        (requireActivity() as MainActivity).contentResolver.openOutputStream(data)!!
+                            .bufferedWriter()
+                            .use { it.write(link) }
+                        onMainDispatcher {
+                            snackbar(getString(R.string.action_export_msg)).show()
+                        }
+                    } catch (e: Exception) {
+                        Logs.w(e)
+                        onMainDispatcher {
+                            snackbar(e.readableMessage).show()
+                        }
+                    } finally {
+                        pendingUnlockedExport = null
+                    }
                 }
             }
         }

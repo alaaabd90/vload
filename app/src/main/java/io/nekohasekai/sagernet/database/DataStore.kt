@@ -84,12 +84,16 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         return groups.find { it.type == GroupType.BASIC }!!.id
     }
 
-    var appTLSVersion by configurationStore.string(Key.APP_TLS_VERSION)
+    var appTLSVersion by configurationStore.string(Key.APP_TLS_VERSION) { "1.3" }
     var enableClashAPI by configurationStore.boolean(Key.ENABLE_CLASH_API)
     var showBottomBar by configurationStore.boolean(Key.SHOW_BOTTOM_BAR)
 
     var allowInsecureOnRequest by configurationStore.boolean(Key.ALLOW_INSECURE_ON_REQUEST)
-    var networkChangeResetConnections by configurationStore.boolean(Key.NETWORK_CHANGE_RESET_CONNECTIONS) { true }
+    // vload: default off, matching Hayder's phone config - resetting every
+    // outbound connection on every network change (WiFi<->LTE flips, DHCP
+    // renewals) was reconnecting active streams more often than the app's
+    // own mux/keepalive logic needed to.
+    var networkChangeResetConnections by configurationStore.boolean(Key.NETWORK_CHANGE_RESET_CONNECTIONS) { false }
     var wakeResetConnections by configurationStore.boolean(Key.WAKE_RESET_CONNECTIONS)
     var migratedPacketEncodingDefault by configurationStore.boolean(Key.MIGRATED_PACKET_ENCODING_DEFAULT)
     var migratedDirectDnsDefault by configurationStore.boolean(Key.MIGRATED_DIRECT_DNS_DEFAULT)
@@ -114,7 +118,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     // sniffing for it, and does NOT also run the general sniff rule -
     // selecting "Sniff result for routing/destination" instead goes back
     // to sing-box's original sniff-based QUIC handling, hang risk and all.
-    var trafficSniffing by configurationStore.stringToInt(Key.TRAFFIC_SNIFFING) { 1 }
+    var trafficSniffing by configurationStore.stringToInt(Key.TRAFFIC_SNIFFING) { 3 }
     val needSniff get() = trafficSniffing == 1 || trafficSniffing == 2
     val quicPortMatch get() = trafficSniffing == 3
 
@@ -131,21 +135,16 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     var globalCustomConfig by configurationStore.string(Key.GLOBAL_CUSTOM_CONFIG) { "" }
 
-    var remoteDns by configurationStore.string(Key.REMOTE_DNS) { "https://dns.google/dns-query" }
-    // 223.5.5.5 (AliDNS) was inherited from the upstream China-focused fork -
-    // it applies mainland China content filtering, which returned HTTP 403
-    // for a wide range of ordinary Western services (Google, YouTube, Play
-    // services, ad/tracker domains vload still needs to resolve even when
-    // blocking them) when queried by vload's actual, non-China userbase.
-    // 1.1.1.1 is a neutral, globally-reliable resolver; kept distinct from
-    // remoteDns's default (dns.google) so both DNS paths aren't a single
-    // provider's outage away from failing together.
-    var directDns by configurationStore.string(Key.DIRECT_DNS) { "https://1.1.1.1/dns-query" }
-    var enableDnsRouting by configurationStore.boolean(Key.ENABLE_DNS_ROUTING) { true }
+    // vload: default to Hayder's chosen resolver (ControlD's free DoH
+    // endpoint) for both remote and direct DNS instead of Google/Cloudflare,
+    // matching his phone's actual configuration.
+    var remoteDns by configurationStore.string(Key.REMOTE_DNS) { "https://freedns.controld.com/p2" }
+    var directDns by configurationStore.string(Key.DIRECT_DNS) { "https://freedns.controld.com/p2" }
+    var enableDnsRouting by configurationStore.boolean(Key.ENABLE_DNS_ROUTING) { false }
     var enableFakeDns by configurationStore.boolean(Key.ENABLE_FAKEDNS) { true }
 
     var rulesProvider by configurationStore.stringToInt(Key.RULES_PROVIDER)
-    var logLevel by configurationStore.stringToInt(Key.LOG_LEVEL)
+    var logLevel by configurationStore.stringToInt(Key.LOG_LEVEL) { 3 } // debug
     var logBufSize by configurationStore.int(Key.LOG_BUF_SIZE) { 0 }
     var acquireWakeLock by configurationStore.boolean(Key.ACQUIRE_WAKE_LOCK)
 
@@ -176,7 +175,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var proxyApps by configurationStore.boolean(Key.PROXY_APPS)
     var bypass by configurationStore.boolean(Key.BYPASS_MODE) { true }
     var individual by configurationStore.string(Key.INDIVIDUAL)
-    var showDirectSpeed by configurationStore.boolean(Key.SHOW_DIRECT_SPEED) { true }
+    var showDirectSpeed by configurationStore.boolean(Key.SHOW_DIRECT_SPEED) { false }
 
     val persistAcrossReboot by configurationStore.boolean(Key.PERSIST_ACROSS_REBOOT) { false }
 
