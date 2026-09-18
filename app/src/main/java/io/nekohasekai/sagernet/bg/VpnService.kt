@@ -117,9 +117,13 @@ class VpnService : BaseVpnService(),
                     // Tethering's hotspot restart can cause exactly this kind
                     // of spurious per-slot network change on some devices.
                     Logs.d("vload: slot $slot change ignored (local Shizuku tethering is restarting the hotspot)")
-                } else if (DataStore.networkChangeResetConnections) {
-                    val closed = delivered.box.resetSlotConnections(slot)
-                    if (closed < 0) {
+                } else {
+                    // This slot's bound transport is gone. Invalidate its
+                    // pooled sessions even when global reset-on-change is off.
+                    runOnDefaultDispatcher {
+                      if (data.proxy !== delivered) return@runOnDefaultDispatcher
+                      val closed = delivered.box.resetSlotConnections(slot)
+                      if (closed < 0) {
                         // Not a weighted (vload) outbound - shouldn't happen
                         // since this controller only runs for Load Balance
                         // profiles, but fall back to the global reset rather
@@ -130,6 +134,7 @@ class VpnService : BaseVpnService(),
                         // fallback.
                         Logs.w("vload: resetSlotConnections($slot) returned negative (no weighted outbound?), falling back to global reset")
                         Libcore.resetAllConnections(true)
+                      }
                     }
                 }
             }
@@ -143,22 +148,23 @@ class VpnService : BaseVpnService(),
     /**
      * Binds fd to the network currently held for [slot] (0 or 1), for a vload
      * outbound member whose protect_path pointed at that slot. If that slot's
-     * network is momentarily unavailable (e.g. mid handover) or bindSocket
-     * fails, falls back to the generic protect() rather than leaving fd
-     * unbound: an unbound socket isn't excluded from our own VPN capture, so
-     * it would loop back into our own tun instead of reaching the network,
-     * which is what caused connections to hang/reset intermittently under
-     * Load Balance specifically.
+     * network is unavailable or binding fails, report failure to the dialer
+     * so the weighted group can try the other member. A generic protect()
+     * fallback would silently use the default radio under the wrong slot.
      */
     fun protectSlot(fd: Int, slot: Int): Boolean {
-        val network = vloadNetworkController?.networkFor(slot) ?: return protect(fd)
+        // Binding an existing file descriptor is unavailable on Android 5.
+        // Fail the member rather than crash or silently use another network.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
+        val network = vloadNetworkController?.networkFor(slot) ?: return false
+        if (!protect(fd)) return false
         val pfd = ParcelFileDescriptor.adoptFd(fd)
         return try {
             network.bindSocket(pfd.fileDescriptor)
             true
         } catch (e: Exception) {
             Logs.w(e)
-            protect(fd)
+            false
         } finally {
             // Go's protect_server owns fd's lifecycle and closes it right
             // after this call returns; detach (not close) so it isn't

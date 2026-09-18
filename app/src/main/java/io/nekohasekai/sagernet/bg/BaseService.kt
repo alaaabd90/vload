@@ -60,7 +60,7 @@ class BaseService {
                         } else {
                             proxy?.box?.wake()
                             if (DataStore.wakeResetConnections) {
-                                Libcore.resetAllConnections(true)
+                                runOnDefaultDispatcher { Libcore.resetAllConnections(true) }
                             }
                         }
                     }
@@ -334,7 +334,7 @@ class BaseService {
                         } else if (isLoadBalance) {
                             Logs.d("vload: default-network change ignored (Load Balance handles its own per-slot reset)")
                         } else if (DataStore.networkChangeResetConnections) {
-                            Libcore.resetAllConnections(true)
+                            runOnDefaultDispatcher { Libcore.resetAllConnections(true) }
                         }
                     }
                 }

@@ -142,8 +142,8 @@ func sendFdToProtectOnce(fd int, path string) error {
 	if err != nil {
 		return fmt.Errorf("failed to receive: %w", err)
 	}
-	if n != 1 {
-		return fmt.Errorf("socket closed unexpectedly")
+	if n != 1 || dummy[0] != 1 {
+		return fmt.Errorf("socket protection was not acknowledged")
 	}
 	return nil
 }

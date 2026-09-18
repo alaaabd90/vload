@@ -2,6 +2,7 @@ package io.nekohasekai.sagernet.utils
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import android.telephony.SubscriptionManager
 import androidx.core.content.ContextCompat
 import io.nekohasekai.sagernet.SagerNet
@@ -23,6 +24,7 @@ object SimSlots {
      * permission isn't granted yet or the device has no active SIMs.
      */
     fun listActiveSims(): List<SimSlotInfo> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return emptyList()
         if (!hasReadPhoneStatePermission()) return emptyList()
         return try {
             val subscriptionManager =

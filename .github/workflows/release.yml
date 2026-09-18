@@ -20,6 +20,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          version=$(sed -n 's/^VERSION_NAME=//p' nb4a.properties | tr -d '\r')
+          test "$RELEASE_TAG" = "v$version"
       - name: Golang Status
         run: find buildScript libcore/*.sh | xargs cat | sha1sum > golang_status
       - name: Libcore Status
@@ -35,10 +41,19 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/setup-go@v5
         with:
-          go-version: ^1.25
+          go-version: '1.26.3'
       - name: Native Build
         if: steps.cache.outputs.cache-hit != 'true'
         run: ./run lib core
+      - name: Check native ABI coverage
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('app/libs/libcore.aar') as archive:
+              names = set(archive.namelist())
+              for abi in ('armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'):
+                  assert f'jni/{abi}/libgojni.so' in names, f'Missing native library: {abi}'
+          PY
   build:
     name: Build OSS APK
     runs-on: ubuntu-latest
@@ -103,13 +118,14 @@ jobs:
           name: APKs
           path: artifacts
       - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          wget -O ghr.tar.gz https://github.com/tcnksm/ghr/releases/download/v0.13.0/ghr_v0.13.0_linux_amd64.tar.gz
-          tar -xvf ghr.tar.gz
-          mv ghr*linux_amd64/ghr .
           mkdir apks
           find artifacts -name "*.apk" -exec cp {} apks \;
-          ./ghr -delete -t "${{ github.token }}" -n "${{ github.event.inputs.tag }}" "${{ github.event.inputs.tag }}" apks
+          gh release create "$RELEASE_TAG" apks/*.apk --target "$GITHUB_SHA" \
+            --title "$RELEASE_TAG" --prerelease --notes-file RELEASE_NOTES.md
   play:
     name: Build Play Bundle
     if: github.event.inputs.play != 'y'

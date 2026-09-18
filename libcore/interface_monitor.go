@@ -6,9 +6,11 @@ import (
 	"github.com/sagernet/sing/common/x/list"
 )
 
-// wtf
-
+// Android's VpnService/slot controller owns availability and connection resets.
+// This adapter supplies no native interface snapshot or native callbacks.
 type interfaceMonitorStub struct{}
+
+func (s *interfaceMonitorStub) PlatformManagesNetworkState() bool { return true }
 
 func (s *interfaceMonitorStub) Start() error {
 	return nil

@@ -419,6 +419,7 @@ class MainActivity : ThemedActivity(),
     // install; declining just asks again next launch instead of silently
     // staying throttled forever.
     private fun requestIgnoreBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
         val powerManager = getSystemService(POWER_SERVICE) as? PowerManager
         val alreadyExempt = powerManager?.isIgnoringBatteryOptimizations(packageName) ?: true
         if (!alreadyExempt) {

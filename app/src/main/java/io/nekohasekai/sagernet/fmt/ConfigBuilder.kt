@@ -195,10 +195,18 @@ fun buildConfig(
     }
 
     return MyOptions().apply {
-        if (!forTest && DataStore.enableClashAPI) experimental = ExperimentalOptions().apply {
-            clash_api = ClashAPIOptions().apply {
+        if (!forTest && (DataStore.enableClashAPI || useFakeDns)) experimental = ExperimentalOptions().apply {
+            if (DataStore.enableClashAPI) clash_api = ClashAPIOptions().apply {
                 external_controller = "127.0.0.1:9090"
                 external_ui = "../files/yacd"
+            }
+            // Apps may retain DNS answers across VPN restarts/profile switches.
+            // Preserve their address-to-domain mappings in the core's private
+            // no_backup working directory. Latency tests never open this file.
+            if (useFakeDns) cache_file = CacheFile().apply {
+                enabled = true
+                store_fakeip = true
+                path = "fakeip-cache.db"
             }
         }
 
@@ -821,18 +829,6 @@ fun buildConfig(
             }
         }
 
-        remoteDns.forEach {
-            var address = it
-            if (address.contains("://")) {
-                address = address.substringAfter("://")
-            }
-            "https://$address".toHttpUrlOrNull()?.apply {
-                if (!host.isIpAddress()) {
-                    domainListDNSDirectForce.add("full:$host")
-                }
-            }
-        }
-
         dns.servers.add(buildDnsServer("local", "dns-local", detourTag = TAG_DIRECT))
 
         directDNS.firstOrNull().let {
@@ -852,21 +848,12 @@ fun buildConfig(
             if (!forTest) dns.servers.add(buildDnsServer(
                 it ?: throw Exception("No remote DNS, check your settings!"),
                 "dns-remote",
-                resolverTag = "dns-direct",
-                resolverStrategy = autoDnsDomainStrategy(SingBoxOptionsUtil.domainStrategy("dns-remote")),
-            ).apply {
-                // Without this, dns-remote falls to the router's default
-                // outbound (TAG_PROXY), which combines both networks per
-                // query - fine for bulk throughput, but two networks can
-                // give different answers (split-horizon DNS, different
-                // upstream results), so bouncing between them per-lookup
-                // undermines stable browsing. Pin DNS to the priority-mode
-                // outbound instead: one consistent network, failing over
-                // rather than splitting.
-                if (proxy.type == ProxyEntity.TYPE_LOAD_BALANCE) {
-                    detour = TAG_DNS_PROXY
-                }
-            })
+                // New-format DNS servers dial directly without an explicit detour.
+                detourTag = if (proxy.type == ProxyEntity.TYPE_LOAD_BALANCE) TAG_DNS_PROXY else TAG_PROXY,
+                // Pass the DNS endpoint hostname through the proxy. An explicit
+                // dns-direct resolver here causes a local bootstrap lookup even
+                // though the subsequent HTTPS connection uses the VPN.
+            ))
         }
 
         dns.final_ = if (forTest) "dns-direct" else "dns-remote"
@@ -945,13 +932,6 @@ fun buildConfig(
             // is to let it be picked deliberately instead of silently
             // layered under every other mode.
             if (DataStore.quicPortMatch) {
-                if (proxy.type == ProxyEntity.TYPE_LOAD_BALANCE) {
-                    route.rules.add(Rule_DefaultOptions().apply {
-                        network = listOf("udp")
-                        port = listOf(443)
-                        outbound = TAG_QUIC_PROXY
-                    })
-                }
                 // sing-box hardcodes a 30s idle timeout for any UDP flow it
                 // classifies as QUIC (constant.ProtocolTimeouts), separate
                 // from the 5-minute default every other UDP flow gets
@@ -971,6 +951,14 @@ fun buildConfig(
                     action = "route-options"
                     _hack_config_map["udp_timeout"] = "90s"
                 })
+                // Routing is terminal, so apply the existing timeout first.
+                if (proxy.type == ProxyEntity.TYPE_LOAD_BALANCE) {
+                    route.rules.add(Rule_DefaultOptions().apply {
+                        network = listOf("udp")
+                        port = listOf(443)
+                        outbound = TAG_QUIC_PROXY
+                    })
+                }
             }
             // built-in DNS rules
             route.rules.add(0, Rule_DefaultOptions().apply {
@@ -1016,6 +1004,14 @@ fun buildConfig(
                     if (ipv6Mode != IPv6Mode.DISABLE) {
                         inet6_range = "fc00::/18"
                     }
+                })
+                // Single-label probes (e.g. initplayback) need a real DNS
+                // answer. Inventing a reachable address for a nonexistent
+                // name delays NXDOMAIN until after a proxy connection.
+                dns.rules.add(DNSRule_DefaultOptions().apply {
+                    inbound = listOf("tun-in")
+                    domain_regex = listOf("^[^.]+\\.?$")
+                    server = "dns-remote"
                 })
                 dns.rules.add(DNSRule_DefaultOptions().apply {
                     inbound = listOf("tun-in")

@@ -11,6 +11,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/matsuridayo/libneko/protect_server"
 	"github.com/matsuridayo/libneko/speedtest"
@@ -33,7 +34,7 @@ import (
 // member's own bind_interface, so nothing here needs to force that off
 // any more - it's already off by default.
 
-var mainInstance *BoxInstance
+var mainInstance atomic.Pointer[BoxInstance]
 
 func VersionBox() string {
 	version := []string{
@@ -61,10 +62,20 @@ func VersionBox() string {
 
 func ResetAllConnections(system bool) {
 	if system {
-		if mainInstance != nil {
-			if cm := service.FromContext[adapter.ConnectionManager](mainInstance.ctx); cm != nil {
+		if instance := mainInstance.Load(); instance != nil {
+			instance.access.Lock()
+			defer instance.access.Unlock()
+			if instance.state == 2 {
+				return
+			}
+			if cm := service.FromContext[adapter.ConnectionManager](instance.ctx); cm != nil {
 				cm.CloseAll()
 			}
+			var tags []string
+			for _, outbound := range instance.Outbound().Outbounds() {
+				tags = append(tags, outbound.Tag())
+			}
+			resetOutboundTransports(instance.ctx, instance.Outbound(), tags)
 		}
 		log.Println("Reset system connections done")
 	} else {
@@ -163,8 +174,7 @@ func (b *BoxInstance) Close() (err error) {
 	b.state = 2
 
 	// clear main instance
-	if mainInstance == b {
-		mainInstance = nil
+	if mainInstance.CompareAndSwap(b, nil) {
 		goServeProtect(false)
 	}
 
@@ -193,7 +203,7 @@ func (b *BoxInstance) Wake() {
 }
 
 func (b *BoxInstance) SetAsMain() {
-	mainInstance = b
+	mainInstance.Store(b)
 	goServeProtect(true)
 }
 
@@ -231,9 +241,7 @@ func (b *BoxInstance) SelectOutbound(tag string) bool {
 // underlying physical network it's bound to drops or recovers. No-op if
 // the running config isn't using a weighted (vload) outbound.
 func (b *BoxInstance) UpdateNetworkAvailability(slot int32, available bool) {
-	if b.weighted != nil {
-		b.weighted.UpdateAvailability(int(slot), available)
-	}
+	findSlotGroups(b.weighted, b.Outbound()).updateAvailability(int(slot), available)
 }
 
 // ResetSlotConnections closes every connection currently open on the given
@@ -245,10 +253,25 @@ func (b *BoxInstance) UpdateNetworkAvailability(slot int32, available bool) {
 // negative return means the running config isn't using a weighted (vload)
 // outbound, so there was nothing slot-scoped to do.
 func (b *BoxInstance) ResetSlotConnections(slot int32) int32 {
+	b.access.Lock()
+	defer b.access.Unlock()
+	if b.state == 2 {
+		return 0
+	}
 	if b.weighted == nil {
 		return -1
 	}
-	return int32(b.weighted.CloseMember(int(slot)))
+	groups := findSlotGroups(b.weighted, b.Outbound())
+	closed := groups.closeMember(int(slot))
+	var tags []string
+	for _, weighted := range groups {
+		members := weighted.All()
+		if slot >= 0 && int(slot) < len(members) {
+			tags = append(tags, members[slot])
+		}
+	}
+	resetOutboundTransports(b.ctx, b.Outbound(), tags)
+	return int32(closed)
 }
 
 func UrlTest(i *BoxInstance, link string, timeout int32) (latency int32, err error) {
@@ -262,14 +285,15 @@ func UrlTest(i *BoxInstance, link string, timeout int32) (latency int32, err err
 		return speedtest.UrlTest(boxapi.CreateProxyHttpClient(i.Box, connectionTracker), link, timeout, speedtest.UrlTestStandard_RTT)
 	}
 	// test direct
-	if mainInstance == nil {
+	instance := mainInstance.Load()
+	if instance == nil {
 		return speedtest.UrlTest(boxapi.CreateProxyHttpClient(nil, nil), link, timeout, speedtest.UrlTestStandard_RTT)
 	}
 	// test mainInstance
-	if mainInstance.v2api != nil {
-		connectionTracker = mainInstance.v2api.StatsService()
+	if instance.v2api != nil {
+		connectionTracker = instance.v2api.StatsService()
 	}
-	return speedtest.UrlTest(boxapi.CreateProxyHttpClient(mainInstance.Box, connectionTracker), link, timeout, speedtest.UrlTestStandard_RTT)
+	return speedtest.UrlTest(boxapi.CreateProxyHttpClient(instance.Box, connectionTracker), link, timeout, speedtest.UrlTestStandard_RTT)
 }
 
 var protectCloser io.Closer
@@ -294,13 +318,13 @@ func goServeProtect(start bool) {
 		}
 	}
 	if start {
-		protectCloser = protect_server.ServeProtect("protect_path", false, 0, func(fd int) {
-			intfBox.AutoDetectInterfaceControl(int32(fd))
+		protectCloser = protect_server.ServeProtectWithError("protect_path", false, 0, func(fd int) error {
+			return intfBox.AutoDetectInterfaceControl(int32(fd))
 		})
 		for i, path := range protectSlotPaths {
 			slot := int32(i)
-			protectSlotClosers[i] = protect_server.ServeProtect(path, false, 0, func(fd int) {
-				intfBox.AutoDetectInterfaceControlSlot(int32(fd), slot)
+			protectSlotClosers[i] = protect_server.ServeProtectWithError(path, false, 0, func(fd int) error {
+				return intfBox.AutoDetectInterfaceControlSlot(int32(fd), slot)
 			})
 		}
 	}

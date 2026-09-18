@@ -26,4 +26,13 @@ popd
 
 ####
 
+if [ ! -d "sing-mux" ]; then
+  git clone --no-checkout https://github.com/alaaabd90/sing-mux-vload.git sing-mux
+fi
+pushd sing-mux
+git checkout "$COMMIT_SING_MUX"
+popd
+
+####
+
 popd

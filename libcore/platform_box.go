@@ -46,8 +46,7 @@ func (w *boxPlatformInterfaceWrapper) UsePlatformAutoDetectInterfaceControl() bo
 func (w *boxPlatformInterfaceWrapper) AutoDetectInterfaceControl(fd int) error {
 	// call protect_path
 	if !isBgProcess {
-		_ = sendFdToProtect(fd, "protect_path")
-		return nil
+		return sendFdToProtect(fd, "protect_path")
 	}
 	// bg process call VPNService
 	return intfBox.AutoDetectInterfaceControl(int32(fd))

@@ -24,11 +24,17 @@ class NativeInterface : BoxPlatformInterface, NB4AInterface {
     //  libbox interface
 
     override fun autoDetectInterfaceControl(fd: Int) {
-        DataStore.vpnService?.protect(fd)
+        DataStore.vpnService?.let { service ->
+            if (!service.protect(fd)) throw java.io.IOException("VPN socket protection failed")
+        }
     }
 
     override fun autoDetectInterfaceControlSlot(fd: Int, slot: Int) {
-        DataStore.vpnService?.protectSlot(fd, slot)
+        val service = DataStore.vpnService
+            ?: throw java.io.IOException("VPN service is unavailable for slot $slot")
+        if (!service.protectSlot(fd, slot)) {
+            throw java.io.IOException("Network binding failed for slot $slot")
+        }
     }
 
     override fun openTun(singTunOptionsJson: String, tunPlatformOptionsJson: String): Long {
@@ -90,7 +96,7 @@ class NativeInterface : BoxPlatformInterface, NB4AInterface {
             Logs.d("other selector: $selectorTag")
             return
         }
-        Libcore.resetAllConnections(true)
+        runOnDefaultDispatcher { Libcore.resetAllConnections(true) }
         DataStore.baseService?.apply {
             runOnDefaultDispatcher {
                 val id = data.proxy!!.config.profileTagMap
