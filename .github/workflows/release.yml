@@ -6,10 +6,10 @@ on:
         description: "Release Tag"
         required: true
       publish:
-        description: "Publish: If want ignore"
+        description: "Enter y to skip publishing (blank publishes APKs and AAB)"
         required: false
       play:
-        description: "Play: If want ignore"
+        description: "Enter y to skip Play bundle (blank builds signed AAB)"
         required: false
 permissions:
   contents: write
@@ -106,9 +106,9 @@ jobs:
           path: ${{ env.APK }}
   publish:
     name: Publish Release
-    if: github.event.inputs.publish != 'y'
+    if: always() && github.event.inputs.publish != 'y' && needs.build.result == 'success' && (needs.play.result == 'success' || needs.play.result == 'skipped')
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, play]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -117,15 +117,33 @@ jobs:
         with:
           name: APKs
           path: artifacts
+      - name: Download Play Bundle
+        if: needs.play.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: AAB
+          path: artifacts
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          mkdir apks
-          find artifacts -name "*.apk" -exec cp {} apks \;
-          gh release create "$RELEASE_TAG" apks/*.apk --target "$GITHUB_SHA" \
-            --title "$RELEASE_TAG" --prerelease --notes-file RELEASE_NOTES.md
+          mkdir release-assets
+          find artifacts -name "*.apk" -exec cp {} release-assets \;
+          find artifacts -name "*.aab" -exec cp {} release-assets \;
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            # Retry an incomplete publication without deleting the release,
+            # moving its tag, or replacing previously published binaries.
+            gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > existing-assets.txt
+            for asset in release-assets/*; do
+              if ! grep -Fxq "$(basename "$asset")" existing-assets.txt; then
+                gh release upload "$RELEASE_TAG" "$asset"
+              fi
+            done
+          else
+            gh release create "$RELEASE_TAG" release-assets/* --target "$GITHUB_SHA" \
+              --title "$RELEASE_TAG" --prerelease --notes-file RELEASE_NOTES.md
+          fi
   play:
     name: Build Play Bundle
     if: github.event.inputs.play != 'y'
@@ -150,17 +168,36 @@ jobs:
         with:
           path: ~/.gradle
           key: gradle-play-${{ hashFiles('**/*.gradle.kts') }}
-      - name: Checkout Library
-        run: |
-          git submodule update --init 'app/*'
       - name: Gradle Build
+        env:
+          BUILD_PLUGIN: none
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+          ALIAS_NAME: ${{ secrets.ALIAS_NAME }}
+          ALIAS_PASS: ${{ secrets.ALIAS_PASS }}
         run: |
           echo "sdk.dir=${ANDROID_HOME}" > local.properties
           echo "ndk.dir=${ANDROID_HOME}/ndk/25.0.8775105" >> local.properties
           export LOCAL_PROPERTIES="${{ secrets.LOCAL_PROPERTIES }}"
+          echo "${{ secrets.RELEASE_KEYSTORE_B64 }}" | base64 -d > release.keystore
           ./run init action gradle
-          ./gradlew bundlePlayRelease
+          ./gradlew :app:bundlePlayRelease
+          version=$(sed -n 's/^VERSION_NAME=//p' nb4a.properties | tr -d '\r')
+          mkdir -p release-bundle
+          cp app/build/outputs/bundle/playRelease/*.aab "release-bundle/vload-$version-play.aab"
+      - name: Verify signed bundle and native libraries
+        run: |
+          jarsigner -verify release-bundle/*.aab > bundle-signature.txt
+          grep -q 'jar verified.' bundle-signature.txt
+          python3 - <<'PY'
+          import pathlib, zipfile
+          bundle, = pathlib.Path('release-bundle').glob('*.aab')
+          with zipfile.ZipFile(bundle) as archive:
+              names = set(archive.namelist())
+              for abi in ('armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'):
+                  assert f'base/lib/{abi}/libgojni.so' in names, f'Missing native library: {abi}'
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: AAB
-          path: app/build/outputs/bundle/playRelease/app-play-release.aab
+          path: release-bundle/*.aab
+          if-no-files-found: error
