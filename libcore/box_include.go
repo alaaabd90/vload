@@ -112,6 +112,7 @@ func nekoboxAndroidDNSTransportRegistry(localTransport LocalDNSTransport) *dns.T
 	transport.RegisterUDP(registry)
 	transport.RegisterTLS(registry)
 	transport.RegisterHTTPS(registry)
+	dns.RegisterTransport[slotDNSOptions](registry, "vload_dns", newSlotDNSTransport)
 	hosts.RegisterTransport(registry)
 	// local.RegisterTransport(registry)
 	fakeip.RegisterTransport(registry)

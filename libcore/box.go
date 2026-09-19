@@ -242,6 +242,13 @@ func (b *BoxInstance) SelectOutbound(tag string) bool {
 // the running config isn't using a weighted (vload) outbound.
 func (b *BoxInstance) UpdateNetworkAvailability(slot int32, available bool) {
 	findSlotGroups(b.weighted, b.Outbound()).updateAvailability(int(slot), available)
+	if manager := service.FromContext[adapter.DNSTransportManager](b.ctx); manager != nil {
+		if transport, found := manager.Transport("dns-remote"); found {
+			if listener, ok := transport.(interface{ UpdateNetworkAvailability(int, bool) }); ok {
+				listener.UpdateNetworkAvailability(int(slot), available)
+			}
+		}
+	}
 }
 
 // ResetSlotConnections closes every connection currently open on the given

@@ -327,6 +327,7 @@ fun buildConfig(
 
         outbounds = mutableListOf()
         endpoints = mutableListOf()
+        var loadBalanceSlotTags: List<String>? = null
 
         // init routing object
         route = RouteOptions().apply {
@@ -594,6 +595,7 @@ fun buildConfig(
 
             val slotATag = buildChain(lb.slotAProxyId, slotAEntity, protectPath = "protect_path_a")
             val slotBTag = buildChain(lb.slotBProxyId, slotBEntity, protectPath = "protect_path_b")
+            loadBalanceSlotTags = listOf(slotATag, slotBTag)
 
             outbounds.add(0, Outbound_WeightedOptions().apply {
                 type = "weighted"
@@ -845,15 +847,29 @@ fun buildConfig(
 
         remoteDns.firstOrNull().let {
             // Always use direct DNS for urlTest
-            if (!forTest) dns.servers.add(buildDnsServer(
-                it ?: throw Exception("No remote DNS, check your settings!"),
-                "dns-remote",
-                // New-format DNS servers dial directly without an explicit detour.
-                detourTag = if (proxy.type == ProxyEntity.TYPE_LOAD_BALANCE) TAG_DNS_PROXY else TAG_PROXY,
-                // Pass the DNS endpoint hostname through the proxy. An explicit
-                // dns-direct resolver here causes a local bootstrap lookup even
-                // though the subsequent HTTPS connection uses the VPN.
-            ))
+            if (!forTest) {
+                val remoteAddress = it ?: throw Exception("No remote DNS, check your settings!")
+                val slots = loadBalanceSlotTags
+                if (slots != null && remoteAddress != "local") {
+                    // Race real DNS exchanges through both available VPN slots.
+                    // FakeIP answers stay local; no local resolver is introduced.
+                    slots.forEachIndexed { index, outboundTag ->
+                        dns.servers.add(buildDnsServer(remoteAddress, "dns-slot-$index", detourTag = outboundTag))
+                    }
+                    dns.servers.add(DNSServerOptions().apply {
+                        type = "vload_dns"
+                        tag = "dns-remote"
+                        _hack_config_map["servers"] = listOf("dns-slot-0", "dns-slot-1")
+                        _hack_config_map["parallel"] = true
+                        _hack_config_map["attempt_timeout"] = "1500ms"
+                        _hack_config_map["retry_interval"] = "10s"
+                    })
+                } else {
+                    // Pass the endpoint hostname through the VPN, without a
+                    // direct bootstrap lookup for this DNS server.
+                    dns.servers.add(buildDnsServer(remoteAddress, "dns-remote", detourTag = TAG_PROXY))
+                }
+            }
         }
 
         dns.final_ = if (forTest) "dns-direct" else "dns-remote"
