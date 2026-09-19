@@ -1,8 +1,16 @@
 diff --git a/client.go b/client.go
-index 85114aa..8b5ff8f 100644
+index 85114aa..17c5896 100644
 --- a/client.go
 +++ b/client.go
-@@ -25,9 +25,18 @@ type Client struct {
+@@ -3,6 +3,7 @@ package mux
+ import (
+ 	"context"
+ 	"net"
++	"strings"
+ 	"sync"
+ 
+ 	"github.com/hashicorp/yamux"
+@@ -25,9 +26,18 @@ type Client struct {
  	padding        bool
  	access         sync.Mutex
  	connections    list.List[abstractSession]
@@ -21,12 +29,79 @@ index 85114aa..8b5ff8f 100644
  type Options struct {
  	Dialer         N.Dialer
  	Logger         logger.Logger
-@@ -137,8 +146,61 @@ func (c *Client) openStream(ctx context.Context) (net.Conn, error) {
+@@ -77,37 +87,37 @@ func NewClient(options Options) (*Client, error) {
+ func (c *Client) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+ 	switch N.NetworkName(network) {
+ 	case N.NetworkTCP:
+-		stream, err := c.openStream(ctx)
++		stream, remoteError, err := c.openStream(ctx)
+ 		if err != nil {
+ 			return nil, err
+ 		}
+-		conn := &clientConn{Conn: stream, destination: destination}
++		conn := &clientConn{Conn: stream, destination: destination, remoteError: remoteError}
+ 		if c.protocol == ProtocolH2Mux || c.protocol == ProtocolYAMux {
+ 			return &clientConnWithCloseWrite{clientConn: conn}, nil
+ 		}
+ 		return conn, nil
+ 	case N.NetworkUDP:
+-		stream, err := c.openStream(ctx)
++		stream, remoteError, err := c.openStream(ctx)
+ 		if err != nil {
+ 			return nil, err
+ 		}
+ 		extendedConn := bufio.NewExtendedConn(stream)
+-		return &clientPacketConn{AbstractConn: extendedConn, conn: extendedConn, destination: destination}, nil
++		return &clientPacketConn{AbstractConn: extendedConn, conn: extendedConn, destination: destination, remoteError: remoteError}, nil
+ 	default:
+ 		return nil, E.Extend(N.ErrUnknownNetwork, network)
+ 	}
+ }
+ 
+ func (c *Client) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+-	stream, err := c.openStream(ctx)
++	stream, remoteError, err := c.openStream(ctx)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	extendedConn := bufio.NewExtendedConn(stream)
+-	return &clientPacketAddrConn{AbstractConn: extendedConn, conn: extendedConn, destination: destination}, nil
++	return &clientPacketAddrConn{AbstractConn: extendedConn, conn: extendedConn, destination: destination, remoteError: remoteError}, nil
+ }
+ 
+-func (c *Client) openStream(ctx context.Context) (net.Conn, error) {
++func (c *Client) openStream(ctx context.Context) (net.Conn, func(string), error) {
+ 	var (
+ 		session abstractSession
+ 		stream  net.Conn
+@@ -125,20 +135,95 @@ func (c *Client) openStream(ctx context.Context) (net.Conn, error) {
+ 		break
+ 	}
+ 	if err != nil {
+-		return nil, err
++		return nil, nil, err
++	}
++	// A panel reload can leave the physical mux connection alive after the
++	// old DNS router shuts down. Retire only that session, not the entire pool.
++	// Ordinary per-destination DNS failures must not churn healthy tunnels.
++	remoteError := func(message string) {
++		if message == "dns router closed" || strings.HasSuffix(message, ": dns router closed") {
++			session.Close()
++		}
+ 	}
+ 	if yamuxStream, ok := stream.(*yamux.Stream); ok {
+-		return &yamuxWrapStream{yamuxStream}, nil
++		return &yamuxWrapStream{yamuxStream}, remoteError, nil
+ 	}
+ 	if c.protocol == ProtocolH2Mux {
+-		return newWrapStreamCloseWrite(stream), nil
++		return newWrapStreamCloseWrite(stream), remoteError, nil
+ 	}
+-	return &wrapStream{stream}, nil
++	return &wrapStream{stream}, remoteError, nil
  }
  
  func (c *Client) offer(ctx context.Context) (abstractSession, error) {
--	c.access.Lock()
--	defer c.access.Unlock()
 +	for {
 +		if err := ctx.Err(); err != nil {
 +			return nil, err
@@ -51,32 +126,47 @@ index 85114aa..8b5ff8f 100644
 +				continue
 +			}
 +		}
-+		dialCtx, cancel := context.WithCancel(ctx)
++		growthCtx := ctx
++		if session != nil {
++			// Growth belongs to the pool, not the request that happened to
++			// trigger it. Reset and offerNew's timeout still cancel the dial.
++			growthCtx = context.WithoutCancel(ctx)
++		}
++		dialCtx, cancel := context.WithCancel(growthCtx)
 +		pending := &pendingSession{done: make(chan struct{}), cancel: cancel}
 +		c.pending = pending
 +		c.access.Unlock()
 +
-+		// Never hold the pool mutex across DNS, TLS or protocol handshakes.
-+		session, err := c.offerNew(dialCtx)
-+		cancel()
-+		c.access.Lock()
-+		stale := c.pending != pending
-+		if !stale {
-+			c.pending = nil
-+			if err == nil {
-+				c.connections.PushBack(session)
-+			}
++		if session != nil {
++			go c.finishPending(dialCtx, pending)
++			return session, nil
 +		}
-+		c.access.Unlock()
-+		pending.finish()
-+		if stale {
-+			if session != nil {
-+				session.Close()
-+			}
-+			return nil, context.Canceled
-+		}
-+		return session, err
++		return c.finishPending(dialCtx, pending)
 +	}
++}
++
++func (c *Client) finishPending(ctx context.Context, pending *pendingSession) (abstractSession, error) {
++	// Never hold the pool mutex across DNS, TLS or protocol handshakes.
++	session, err := c.offerNew(ctx)
++	pending.cancel()
+ 	c.access.Lock()
+-	defer c.access.Unlock()
++	stale := c.pending != pending
++	if !stale {
++		c.pending = nil
++		if err == nil {
++			c.connections.PushBack(session)
++		}
++	}
++	c.access.Unlock()
++	pending.finish()
++	if stale {
++		if session != nil {
++			session.Close()
++		}
++		return nil, context.Canceled
++	}
++	return session, err
 +}
 +
 +// availableSession is called with access held. The second result requests
@@ -85,7 +175,7 @@ index 85114aa..8b5ff8f 100644
  
  	var sessions []abstractSession
  	for element := c.connections.Front(); element != nil; {
-@@ -154,28 +216,33 @@ func (c *Client) offer(ctx context.Context) (abstractSession, error) {
+@@ -154,28 +239,33 @@ func (c *Client) offer(ctx context.Context) (abstractSession, error) {
  	}
  	if c.brutal.Enabled {
  		if len(sessions) > 0 {
@@ -126,7 +216,7 @@ index 85114aa..8b5ff8f 100644
  }
  
  func (c *Client) offerNew(ctx context.Context) (abstractSession, error) {
-@@ -232,7 +299,6 @@ func (c *Client) offerNew(ctx context.Context) (abstractSession, error) {
+@@ -232,7 +322,6 @@ func (c *Client) offerNew(ctx context.Context) (abstractSession, error) {
  			return nil, E.Cause(err, "brutal exchange")
  		}
  	}
@@ -134,7 +224,7 @@ index 85114aa..8b5ff8f 100644
  	return session, nil
  }
  
-@@ -264,11 +330,18 @@ func (c *Client) brutalExchange(ctx context.Context, sessionConn net.Conn, sessi
+@@ -264,11 +353,18 @@ func (c *Client) brutalExchange(ctx context.Context, sessionConn net.Conn, sessi
  
  func (c *Client) Reset() {
  	c.access.Lock()
@@ -156,12 +246,70 @@ index 85114aa..8b5ff8f 100644
  }
  
  func (c *Client) Close() error {
+diff --git a/client_conn.go b/client_conn.go
+index 9489ff1..5a8bca0 100644
+--- a/client_conn.go
++++ b/client_conn.go
+@@ -18,6 +18,7 @@ type clientConn struct {
+ 	destination    M.Socksaddr
+ 	requestWritten bool
+ 	responseRead   bool
++	remoteError    func(string)
+ }
+ 
+ func (c *clientConn) NeedHandshake() bool {
+@@ -30,6 +31,9 @@ func (c *clientConn) readResponse() error {
+ 		return err
+ 	}
+ 	if response.Status == statusError {
++		if c.remoteError != nil {
++			c.remoteError(response.Message)
++		}
+ 		return E.New("remote error: ", response.Message)
+ 	}
+ 	return nil
+@@ -110,6 +114,7 @@ type clientPacketConn struct {
+ 	destination     M.Socksaddr
+ 	requestWritten  bool
+ 	responseRead    bool
++	remoteError     func(string)
+ 	readWaitOptions N.ReadWaitOptions
+ }
+ 
+@@ -123,6 +128,9 @@ func (c *clientPacketConn) readResponse() error {
+ 		return err
+ 	}
+ 	if response.Status == statusError {
++		if c.remoteError != nil {
++			c.remoteError(response.Message)
++		}
+ 		return E.New("remote error: ", response.Message)
+ 	}
+ 	return nil
+@@ -289,6 +297,7 @@ type clientPacketAddrConn struct {
+ 	destination     M.Socksaddr
+ 	requestWritten  bool
+ 	responseRead    bool
++	remoteError     func(string)
+ 	readWaitOptions N.ReadWaitOptions
+ }
+ 
+@@ -302,6 +311,9 @@ func (c *clientPacketAddrConn) readResponse() error {
+ 		return err
+ 	}
+ 	if response.Status == statusError {
++		if c.remoteError != nil {
++			c.remoteError(response.Message)
++		}
+ 		return E.New("remote error: ", response.Message)
+ 	}
+ 	return nil
 diff --git a/client_pool_test.go b/client_pool_test.go
 new file mode 100644
-index 0000000..630cea8
+index 0000000..1e86e75
 --- /dev/null
 +++ b/client_pool_test.go
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,155 @@
 +package mux
 +
 +import (
@@ -272,4 +420,323 @@ index 0000000..630cea8
 +	}
 +	cancel()
 +	<-done
++}
++
++// Even the caller that triggers growth should use an existing usable session.
++func TestPoolGrowthInitiatorDoesNotWaitForSlowDial(t *testing.T) {
++	d := &stalledPoolDialer{started: make(chan struct{})}
++	c, _ := NewClient(Options{Dialer: d, Protocol: "yamux", MaxConnections: 2, MinStreams: 4})
++	existing := &availablePoolSession{}
++	c.connections.PushBack(existing)
++	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
++	defer cancel()
++	got, err := c.offer(ctx)
++	defer c.Reset()
++	if err != nil || got != existing {
++		t.Fatalf("growth initiator stalled despite usable session: %v", err)
++	}
++	select {
++	case <-d.started:
++	case <-time.After(time.Second):
++		t.Fatal("pool did not start growth")
++	}
++}
++
++func TestBackgroundGrowthIsCancelledByReset(t *testing.T) {
++	d := &stalledPoolDialer{started: make(chan struct{})}
++	c, _ := NewClient(Options{Dialer: d, Protocol: "yamux", MaxConnections: 2, MinStreams: 4})
++	c.connections.PushBack(&availablePoolSession{})
++	if _, err := c.offer(context.Background()); err != nil {
++		t.Fatal(err)
++	}
++	<-d.started
++	c.access.Lock()
++	pending := c.pending
++	c.access.Unlock()
++	c.Reset()
++	select {
++	case <-pending.done:
++	case <-time.After(time.Second):
++		t.Fatal("growth leaked after reset")
++	}
++	c.access.Lock()
++	defer c.access.Unlock()
++	if c.connections.Len() != 0 {
++		t.Fatal("reset repopulated pool")
++	}
++}
+diff --git a/client_recovery_test.go b/client_recovery_test.go
+new file mode 100644
+index 0000000..b441992
+--- /dev/null
++++ b/client_recovery_test.go
+@@ -0,0 +1,145 @@
++package mux
++
++import (
++	"context"
++	"errors"
++	"github.com/sagernet/sing/common/bufio"
++	M "github.com/sagernet/sing/common/metadata"
++	"io"
++	"net"
++	"strings"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++type recoveryDialer struct{ address string }
++
++func (d recoveryDialer) DialContext(ctx context.Context, _ string, _ M.Socksaddr) (net.Conn, error) {
++	return (&net.Dialer{}).DialContext(ctx, "tcp", d.address)
++}
++func (recoveryDialer) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
++	return nil, errors.New("unused")
++}
++
++// A reloaded server can leave its mux transport alive with a closed DNS router.
++func TestPoolRecoversFromClosedRemoteDNSRouter(t *testing.T) {
++	testPoolRemoteError(t, "open connection using outbound/direct[direct]: dns router closed", true)
++}
++func TestPoolDoesNotRetireOnDestinationErrors(t *testing.T) {
++	for _, message := range []string{"lookup example.com: NXDOMAIN", "lookup example.com: unexpected status: 403 Forbidden"} {
++		t.Run(message, func(t *testing.T) { testPoolRemoteError(t, message, false) })
++	}
++}
++func testPoolRemoteError(t *testing.T, message string, shouldRetire bool) {
++	for _, protocol := range []string{"yamux", "smux", "h2mux"} {
++		for _, mode := range []string{"tcp", "udp", "packet"} {
++			t.Run(protocol+"/"+mode, func(t *testing.T) {
++				listener, err := net.Listen("tcp", "127.0.0.1:0")
++				if err != nil {
++					t.Fatal(err)
++				}
++				defer listener.Close()
++				var accepts atomic.Int32
++				go func() {
++					for {
++						conn, err := listener.Accept()
++						if err != nil {
++							return
++						}
++						number := accepts.Add(1)
++						go func() {
++							defer conn.Close()
++							req, err := ReadRequest(conn)
++							if err != nil {
++								return
++							}
++							session, err := newServerSession(conn, req.Protocol)
++							if err != nil {
++								return
++							}
++							defer session.Close()
++							for {
++								stream, err := session.Accept()
++								if err != nil {
++									return
++								}
++								go func() {
++									defer stream.Close()
++									stream.SetDeadline(time.Now().Add(2 * time.Second))
++									if _, err := ReadStreamRequest(stream); err != nil {
++										return
++									}
++									one := make([]byte, 1)
++									if _, err := io.ReadFull(stream, one); err != nil {
++										return
++									}
++									response := &serverConn{ExtendedConn: bufio.NewExtendedConn(stream)}
++									if number == 1 {
++										response.HandshakeFailure(errors.New(message))
++									} else {
++										response.Write([]byte("Y"))
++									}
++								}()
++							}
++						}()
++					}
++				}()
++				client, err := NewClient(Options{Dialer: recoveryDialer{listener.Addr().String()}, Protocol: protocol, MaxConnections: 1})
++				if err != nil {
++					t.Fatal(err)
++				}
++				defer client.Close()
++				request := func() error {
++					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
++					defer cancel()
++					if mode == "packet" {
++						conn, err := client.ListenPacket(ctx, M.ParseSocksaddr("example.com:443"))
++						if err != nil {
++							return err
++						}
++						defer conn.Close()
++						conn.SetDeadline(time.Now().Add(2 * time.Second))
++						if _, err = conn.WriteTo([]byte("X"), M.ParseSocksaddr("example.com:443")); err != nil {
++							return err
++						}
++						_, _, err = conn.ReadFrom(make([]byte, 32))
++						return err
++					}
++					conn, err := client.DialContext(ctx, mode, M.ParseSocksaddr("example.com:443"))
++					if err != nil {
++						return err
++					}
++					defer conn.Close()
++					conn.SetDeadline(time.Now().Add(2 * time.Second))
++					if _, err = conn.Write([]byte("X")); err != nil {
++						return err
++					}
++					one := make([]byte, 1)
++					_, err = io.ReadFull(conn, one)
++					return err
++				}
++				if err = request(); err == nil || !strings.Contains(err.Error(), message) {
++					t.Fatalf("expected closed router: %v", err)
++				}
++				mode = "tcp"
++				err = request()
++				if shouldRetire {
++					if err != nil {
++						t.Fatalf("pool reused a closed remote router: %v", err)
++					}
++					if accepts.Load() != 2 {
++						t.Fatalf("expected replacement tunnel, got %d", accepts.Load())
++					}
++				} else {
++					if err == nil || !strings.Contains(err.Error(), message) {
++						t.Fatalf("expected per-destination error, got %v", err)
++					}
++					if accepts.Load() != 1 {
++						t.Fatal("destination failure discarded a healthy tunnel")
++					}
++				}
++			})
++		}
++	}
++}
+diff --git a/h2mux_conn.go b/h2mux_conn.go
+index 47a2965..5d74bbc 100644
+--- a/h2mux_conn.go
++++ b/h2mux_conn.go
+@@ -5,6 +5,7 @@ import (
+ 	"io"
+ 	"net"
+ 	"os"
++	"sync"
+ 	"time"
+ 
+ 	"github.com/sagernet/sing/common"
+@@ -13,6 +14,8 @@ import (
+ )
+ 
+ type httpConn struct {
++	access sync.Mutex
++	closed bool
+ 	reader io.Reader
+ 	writer io.Writer
+ 	create chan struct{}
+@@ -36,19 +39,37 @@ func newLateHTTPConn(writer io.Writer, cancel context.CancelFunc) *httpConn {
+ }
+ 
+ func (c *httpConn) setup(reader io.Reader, err error) {
+-	c.reader = reader
+-	c.err = err
++	c.access.Lock()
++	if c.closed {
++		c.err = net.ErrClosed
++	} else {
++		c.reader = reader
++		c.err = err
++	}
++	closed := c.closed
+ 	close(c.create)
++	c.access.Unlock()
++	if closed {
++		common.Close(reader)
++	}
+ }
+ 
+ func (c *httpConn) Read(b []byte) (n int, err error) {
+-	if c.reader == nil {
++	// The channel publishes setup's reader and error. Checking reader before
++	// waiting races the HTTP/2 response goroutine.
++	if c.create != nil {
+ 		<-c.create
+-		if c.err != nil {
+-			return 0, c.err
+-		}
+ 	}
+-	n, err = c.reader.Read(b)
++	c.access.Lock()
++	reader, setupErr, closed := c.reader, c.err, c.closed
++	c.access.Unlock()
++	if closed {
++		return 0, net.ErrClosed
++	}
++	if setupErr != nil {
++		return 0, setupErr
++	}
++	n, err = reader.Read(b)
+ 	return n, baderror.WrapH2(err)
+ }
+ 
+@@ -58,10 +79,19 @@ func (c *httpConn) Write(b []byte) (n int, err error) {
+ }
+ 
+ func (c *httpConn) Close() error {
++	c.access.Lock()
++	if c.closed {
++		c.access.Unlock()
++		return nil
++	}
++	c.closed = true
++	reader := c.reader
++	c.access.Unlock()
+ 	if c.cancel != nil {
+ 		c.cancel()
+ 	}
+-	return common.Close(c.reader, c.writer)
++	// If setup is still pending, it will close the eventual response body.
++	return common.Close(reader, c.writer)
+ }
+ 
+ func (c *httpConn) CloseWrite() error {
+diff --git a/h2mux_conn_test.go b/h2mux_conn_test.go
+new file mode 100644
+index 0000000..f750d87
+--- /dev/null
++++ b/h2mux_conn_test.go
+@@ -0,0 +1,31 @@
++package mux
++
++import (
++	"bytes"
++	"io"
++	"sync"
++	"sync/atomic"
++	"testing"
++)
++
++type trackedResponseBody struct {
++	*bytes.Reader
++	closes atomic.Int32
++}
++
++func (r *trackedResponseBody) Close() error { r.closes.Add(1); return nil }
++func TestHTTPConnCloseDuringResponseSetup(t *testing.T) {
++	for i := 0; i < 100; i++ {
++		c := newLateHTTPConn(io.Discard, func() {})
++		body := &trackedResponseBody{Reader: bytes.NewReader([]byte("x"))}
++		var wg sync.WaitGroup
++		wg.Add(3)
++		go func() { defer wg.Done(); c.setup(body, nil) }()
++		go func() { defer wg.Done(); c.Close() }()
++		go func() { defer wg.Done(); c.Read(make([]byte, 1)) }()
++		wg.Wait()
++		if body.closes.Load() != 1 {
++			t.Fatalf("response closed %d times", body.closes.Load())
++		}
++	}
 +}
