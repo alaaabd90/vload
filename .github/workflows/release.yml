@@ -131,6 +131,12 @@ jobs:
           mkdir release-assets
           find artifacts -name "*.apk" -exec cp {} release-assets \;
           find artifacts -name "*.aab" -exec cp {} release-assets \;
+          cp RELEASE_NOTES.md release-notes.md
+          printf '\n## Direct downloads\n\n' >> release-notes.md
+          for asset in release-assets/*; do
+            name=$(basename "$asset")
+            printf -- '- [%s](https://github.com/%s/releases/download/%s/%s)\n' "$name" "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$name" >> release-notes.md
+          done
           if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
             # Retry an incomplete publication without deleting the release,
             # moving its tag, or replacing previously published binaries.
@@ -140,9 +146,10 @@ jobs:
                 gh release upload "$RELEASE_TAG" "$asset"
               fi
             done
+            gh release edit "$RELEASE_TAG" --prerelease=false --latest --notes-file release-notes.md
           else
             gh release create "$RELEASE_TAG" release-assets/* --target "$GITHUB_SHA" \
-              --title "$RELEASE_TAG" --prerelease --notes-file RELEASE_NOTES.md
+              --title "$RELEASE_TAG" --latest --notes-file release-notes.md
           fi
   play:
     name: Build Play Bundle
