@@ -1,0 +1,4 @@
+# Native source preparation must run identically from Windows exports and Linux CI.
+*.sh text eol=lf
+*.patch text eol=lf
+run text eol=lf
