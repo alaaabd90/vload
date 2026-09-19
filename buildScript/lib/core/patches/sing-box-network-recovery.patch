@@ -1,5 +1,5 @@
 diff --git a/protocol/group/weighted.go b/protocol/group/weighted.go
-index b1df0a58d..7bb1c9369 100644
+index b1df0a58d..f35f57aef 100644
 --- a/protocol/group/weighted.go
 +++ b/protocol/group/weighted.go
 @@ -13,6 +13,7 @@ import (
@@ -22,7 +22,35 @@ index b1df0a58d..7bb1c9369 100644
  type weightedMember struct {
  	tag      string
  	outbound adapter.Outbound
-@@ -124,6 +130,9 @@ type Weighted struct {
+@@ -67,15 +73,10 @@ type memberHealth struct {
+ 	generation           atomic.Int64
+ }
+ 
+-// Weighted distributes new connections across its members by picking
+-// whichever member currently has the most spare proven capacity (see
+-// adaptiveLimiter), picking a member per new connection/packet-connection
+-// rather than sticking to a single selection like Selector does. It's
+-// intended for splitting traffic across two physical networks bound via
+-// per-member bind_interface dialer options. Nothing needs to be
+-// hand-configured for this to work correctly: each member's real
+-// concurrency ceiling is discovered live from its own connection outcomes,
+-// not from a fixed weight or connection-count guess.
++// Weighted selects a path per connection using recent response latency and
++// pending setup pressure. Until a path has supplied a latency sample, the
++// adaptive capacity picker supplies the initial selection. Established idle
++// connections do not penalize a path once response measurements are known.
+ //
+ // Members are excluded from picking in two independent ways: explicitly via
+ // UpdateAvailability (for a platform-side network-change signal), and
+@@ -101,6 +102,7 @@ type Weighted struct {
+ 	picker     *pccPicker // still used for availability tracking and the all-members-tripped fallback
+ 	health     []memberHealth
+ 	limiters   []*adaptiveLimiter
++	responses  []*responseStats
+ 	priority   bool // true when Mode == ModePriority
+ 	tieCursor  atomic.Int64
+ 	// pickMu serializes pick()'s headroom-check-then-acquire as a single
+@@ -124,6 +126,9 @@ type Weighted struct {
  	// Physical availability is separate from circuit-breaker cooldown. A
  	// fallback probe or an old recovery timer cannot resurrect a lost radio.
  	unavailableNetworks sync.Map // member index -> struct{}
@@ -32,7 +60,7 @@ index b1df0a58d..7bb1c9369 100644
  	// hedgeLossStreak/hedgeSuppressedUntil let a member whose hedge races
  	// are essentially always lost - not failed, just consistently slower
  	// than whichever other member keeps winning for the same destination -
-@@ -236,11 +245,32 @@ func (w *Weighted) UpdateAvailability(index int, available bool) {
+@@ -236,11 +241,37 @@ func (w *Weighted) UpdateAvailability(index int, available bool) {
  	if index < 0 || index >= len(w.health) {
  		return
  	}
@@ -62,10 +90,15 @@ index b1df0a58d..7bb1c9369 100644
 +	}
 +	w.networkChanged = make(chan struct{})
 +	w.networkMu.Unlock()
++	w.pickMu.Lock()
++	w.ensureResponseStatsLocked()
++	// Keep late callbacks from the old network generation isolated.
++	w.responses[index] = new(responseStats)
++	w.pickMu.Unlock()
  	w.logger.Info("vload: slot ", index, " availability -> ", available)
  	w.picker.SetAvailable(index, available)
  	if index >= 0 && index < len(w.health) {
-@@ -257,13 +287,44 @@ func (w *Weighted) UpdateAvailability(index int, available bool) {
+@@ -257,13 +288,44 @@ func (w *Weighted) UpdateAvailability(index int, available bool) {
  	}
  }
  
@@ -111,13 +144,91 @@ index b1df0a58d..7bb1c9369 100644
  // the breaker excludes the member via the same SetAvailable path an
  // external monitor would use, and schedules its own recovery - this needs
  // no external signal at all to eventually retry a member that's recovered.
-@@ -482,9 +543,10 @@ func (w *Weighted) hedgeSuppressed(idx int) bool {
+@@ -327,14 +389,9 @@ func (w *Weighted) recordResult(index int, err error) {
+ 	})
+ }
+ 
+-// pick chooses the available member with the most spare proven capacity
+-// (adaptiveLimiter.headroom) - i.e. whichever member currently has the most
+-// room left within what it's already shown it can sustain, so traffic
+-// naturally flows toward whichever network is actually performing better
+-// right now rather than a fixed, hand-configured ratio. Ties are rotated
+-// round-robin for fairness. If every member's circuit breaker is currently
+-// open, falls back to the picker's plain rotation so a connection still
+-// gets placed somewhere instead of being refused outright.
++// pick uses response latency and pending setup pressure when measurements
++// are available, otherwise capacity headroom. If every physically available
++// member's breaker is open, permit a recovery attempt using plain rotation.
+ func (w *Weighted) pick() (int, weightedMember, error) {
+ 	return w.pickExcept(-1)
+ }
+@@ -345,6 +402,7 @@ func (w *Weighted) pick() (int, weightedMember, error) {
+ // pointless.
+ func (w *Weighted) pickExcept(exclude int) (int, weightedMember, error) {
+ 	w.pickMu.Lock()
++	w.ensureResponseStatsLocked()
+ 	best := -1
+ 	if w.priority {
+ 		// Strict configured order, first available - ignore headroom
+@@ -362,6 +420,21 @@ func (w *Weighted) pickExcept(exclude int) (int, weightedMember, error) {
+ 		}
+ 	} else {
+ 		var bestHeadroom int64
++		var bestScore float64
++		latencyKnown := false
++		var referenceDelay int64
++		var bestKnown bool
++		now := time.Now()
++		for i := range w.limiters {
++			if i != exclude && w.networkAvailable(i) && w.picker.IsAvailable(i) {
++				if _, known := w.responses[i].score(now); known {
++					latencyKnown = true
++					if delay := w.responses[i].delay.Load(); delay > referenceDelay {
++						referenceDelay = delay
++					}
++				}
++			}
++		}
+ 		tied := 0
+ 		for i := range w.limiters {
+ 			if i == exclude {
+@@ -371,12 +444,26 @@ func (w *Weighted) pickExcept(exclude int) (int, weightedMember, error) {
+ 				continue
+ 			}
+ 			h := w.limiters[i].headroom()
++			score, known := w.responses[i].score(now)
++			if latencyKnown && !known {
++				// Do not assume an unmeasured network beats one that already
++				// responded. Try it when setup pressure makes that useful.
++				score = float64(referenceDelay) * float64(w.responses[i].pending.Load()+1)
++			}
++			better := h > bestHeadroom
++			equal := h == bestHeadroom
++			if latencyKnown {
++				better = score < bestScore || (score == bestScore && known && !bestKnown)
++				equal = score == bestScore && known == bestKnown
++			}
+ 			switch {
+-			case best == -1 || h > bestHeadroom:
++			case best == -1 || better:
+ 				best = i
+ 				bestHeadroom = h
++				bestScore = score
++				bestKnown = known
+ 				tied = 1
+-			case h == bestHeadroom:
++			case equal:
+ 				tied++
+ 				// Reservoir-style rotation across tied candidates so repeated
+ 				// ties don't always resolve to the lowest index.
+@@ -482,9 +569,11 @@ func (w *Weighted) hedgeSuppressed(idx int) bool {
  const hedgeDelay = 250 * time.Millisecond
  
  type hedgeResult[T io.Closer] struct {
 -	index int
 -	conn  T
 -	err   error
++	tracker    *responseTracker
 +	networkCtx context.Context
 +	index      int
 +	conn       T
@@ -125,23 +236,24 @@ index b1df0a58d..7bb1c9369 100644
  }
  
  // hedgedPick races dial against the pick()-preferred member and, if that
-@@ -496,19 +558,30 @@ type hedgeResult[T io.Closer] struct {
+@@ -496,19 +585,31 @@ type hedgeResult[T io.Closer] struct {
  // A race loser is never counted against its member's health (see
  // abandonHedgeLoser): canceling mid-dial because the other side already won
  // is our choice, not evidence the member is unhealthy.
 -func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context.Context, adapter.Outbound) (T, error)) (int, T, context.CancelFunc, error) {
-+func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context.Context, adapter.Outbound) (T, error)) (int, T, context.CancelFunc, context.Context, error) {
++func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context.Context, adapter.Outbound) (T, error)) (int, T, context.CancelFunc, context.Context, *responseTracker, error) {
  	var zero T
 +	networkEvents := w.networkEvents()
  	primaryIdx, primaryMember, err := w.pick()
  	if err != nil {
 -		return -1, zero, nil, err
-+		return -1, zero, nil, nil, err
++		return -1, zero, nil, nil, nil, err
  	}
  
  	start := func(idx int, member weightedMember) (<-chan hedgeResult[T], context.CancelFunc) {
 -		dialCtx, cancel := context.WithCancel(ctx)
 +		networkCtx := w.memberNetworkContext(idx)
++		tracker := newResponseTracker(w.responseStats(idx))
 +		dialCtx, cancelDial := context.WithCancel(ctx)
 +		stopNetworkCancel := context.AfterFunc(networkCtx, cancelDial)
 +		if networkCtx.Err() != nil {
@@ -157,11 +269,11 @@ index b1df0a58d..7bb1c9369 100644
 +			if dialErr == nil {
 +				conn, dialErr = dial(dialCtx, member.outbound)
 +			}
-+			ch <- hedgeResult[T]{networkCtx: networkCtx, index: idx, conn: conn, err: dialErr}
++			ch <- hedgeResult[T]{tracker: tracker, networkCtx: networkCtx, index: idx, conn: conn, err: dialErr}
  		}()
  		return ch, cancel
  	}
-@@ -528,6 +601,8 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+@@ -528,6 +629,8 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
  		}
  	}()
  
@@ -170,7 +282,7 @@ index b1df0a58d..7bb1c9369 100644
  	trySecondary := func() {
  		if secondaryCh != nil {
  			return
-@@ -536,6 +611,16 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+@@ -536,6 +639,16 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
  		if pickErr != nil {
  			return // nothing else available right now; keep waiting on primary
  		}
@@ -187,7 +299,7 @@ index b1df0a58d..7bb1c9369 100644
  		secondaryCh, secondaryCancel = start(idx, member)
  	}
  
-@@ -545,18 +630,25 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+@@ -545,18 +658,25 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
  	// stays nil (never fires in the select below) so failover only ever
  	// triggers on an actual primary failure, further down.
  	var timerC <-chan time.Time
@@ -215,26 +327,28 @@ index b1df0a58d..7bb1c9369 100644
  			if res.err == nil {
  				w.recordHedgeOutcome(primaryIdx, true)
  				if secondaryCh != nil {
-@@ -567,7 +659,7 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+@@ -567,24 +687,32 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
  				// for their first write. The returned connection owns it now.
  				winnerCancel := primaryCancel
  				primaryCancel = nil
 -				return res.index, res.conn, winnerCancel, nil
-+				return res.index, res.conn, winnerCancel, res.networkCtx, nil
++				return res.index, res.conn, winnerCancel, res.networkCtx, res.tracker, nil
  			}
  			// A genuine failure, not a cancellation - this attempt is done
  			// either way (we're either racing a different secondary or
-@@ -576,15 +668,22 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+ 			// giving up entirely), so its slot must be freed now rather
+ 			// than left to a Close() that will never come.
  			w.release(res.index)
++			res.tracker.close()
  			primaryFailed = true
  			if secondaryFailed {
 -				return -1, zero, nil, res.err
-+				return -1, zero, nil, nil, res.err
++				return -1, zero, nil, nil, nil, res.err
  			}
  			trySecondary()
  			if secondaryCh == nil {
 -				return -1, zero, nil, res.err
-+				return -1, zero, nil, nil, res.err
++				return -1, zero, nil, nil, nil, res.err
  			}
  		case res := <-secondaryCh:
  			secondaryCh = nil
@@ -250,14 +364,15 @@ index b1df0a58d..7bb1c9369 100644
  			if res.err == nil {
  				// The secondary won a race the primary was still in when
  				// this fired - i.e. hedging actually mattered here, not
-@@ -601,14 +700,29 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+@@ -601,14 +729,30 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
  				abandonHedgeLoser(w, primaryCh)
  				winnerCancel := secondaryCancel
  				secondaryCancel = nil
 -				return res.index, res.conn, winnerCancel, nil
-+				return res.index, res.conn, winnerCancel, res.networkCtx, nil
++				return res.index, res.conn, winnerCancel, res.networkCtx, res.tracker, nil
  			}
  			w.release(res.index)
++			res.tracker.close()
  			secondaryFailed = true
 +			// A replacement can arrive before the canceled old dial returns.
 +			// Its notification then sees secondaryCh still occupied. Retry only
@@ -270,7 +385,7 @@ index b1df0a58d..7bb1c9369 100644
 +			}
  			if primaryFailed {
 -				return -1, zero, nil, res.err
-+				return -1, zero, nil, nil, res.err
++				return -1, zero, nil, nil, nil, res.err
 +			}
 +		case <-networkEvents:
 +			networkEvents = w.networkEvents()
@@ -282,36 +397,49 @@ index b1df0a58d..7bb1c9369 100644
  			// Only the speculative "primary might just be slow" hedge is
  			// gated - a primary that genuinely fails still hedges
  			// unconditionally via the primaryFailed branch above,
-@@ -629,7 +743,7 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+@@ -629,7 +773,7 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
  				secondaryCancel()
  				abandonHedgeLoser(w, secondaryCh)
  			}
 -			return -1, zero, nil, ctx.Err()
-+			return -1, zero, nil, nil, ctx.Err()
++			return -1, zero, nil, nil, nil, ctx.Err()
  		}
  	}
  }
-@@ -653,13 +767,18 @@ func abandonHedgeLoser[T io.Closer](w *Weighted, ch <-chan hedgeResult[T]) {
+@@ -645,6 +789,7 @@ func abandonHedgeLoser[T io.Closer](w *Weighted, ch <-chan hedgeResult[T]) {
+ 	}
+ 	go func() {
+ 		res := <-ch
++		res.tracker.close()
+ 		w.release(res.index)
+ 		if res.err == nil {
+ 			res.conn.Close()
+@@ -653,28 +798,47 @@ func abandonHedgeLoser[T io.Closer](w *Weighted, ch <-chan hedgeResult[T]) {
  }
  
  func (w *Weighted) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 -	index, conn, cancel, err := hedgedPick(w, ctx, func(dialCtx context.Context, ob adapter.Outbound) (net.Conn, error) {
-+	index, conn, cancel, networkCtx, err := hedgedPick(w, ctx, func(dialCtx context.Context, ob adapter.Outbound) (net.Conn, error) {
++	index, conn, cancel, networkCtx, tracker, err := hedgedPick(w, ctx, func(dialCtx context.Context, ob adapter.Outbound) (net.Conn, error) {
  		return ob.DialContext(dialCtx, network, destination)
  	})
  	if err != nil {
  		return nil, err
  	}
  	wrapped := &weightedCountedConn{Conn: conn}
++	wrapped.onWrite = tracker.write
 +	wrapped.onResponse = func() {
 +		if ctx.Err() == nil && networkCtx.Err() == nil {
++			tracker.response()
 +			w.recordResult(index, nil)
++		} else {
++			tracker.close()
 +		}
 +	}
  	wrapped.release = func() {
++		tracker.close()
  		cancel()
  		w.release(index)
-@@ -667,14 +786,23 @@ func (w *Weighted) DialContext(ctx context.Context, network string, destination
+ 		if index >= 0 && index < len(w.memberConns) {
  			w.memberConns[index].Delete(wrapped)
  		}
  	}
@@ -333,23 +461,28 @@ index b1df0a58d..7bb1c9369 100644
  
  func (w *Weighted) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 -	index, conn, cancel, err := hedgedPick(w, ctx, func(dialCtx context.Context, ob adapter.Outbound) (net.PacketConn, error) {
-+	index, conn, cancel, networkCtx, err := hedgedPick(w, ctx, func(dialCtx context.Context, ob adapter.Outbound) (net.PacketConn, error) {
++	index, conn, cancel, networkCtx, tracker, err := hedgedPick(w, ctx, func(dialCtx context.Context, ob adapter.Outbound) (net.PacketConn, error) {
  		return ob.ListenPacket(dialCtx, destination)
  	})
  	if err != nil {
-@@ -683,6 +811,11 @@ func (w *Weighted) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
+@@ -683,16 +847,35 @@ func (w *Weighted) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
  	// bufio.NewPacketConn normalizes conn to N.NetPacketConn *before* it gets
  	// embedded below - see the type's doc comment for why this matters.
  	wrapped := &weightedCountedPacketConn{NetPacketConn: bufio.NewPacketConn(conn)}
++	wrapped.onWrite = tracker.write
 +	wrapped.onResponse = func() {
 +		if ctx.Err() == nil && networkCtx.Err() == nil {
++			tracker.response()
 +			w.recordResult(index, nil)
++		} else {
++			tracker.close()
 +		}
 +	}
  	wrapped.release = func() {
++		tracker.close()
  		cancel()
  		w.release(index)
-@@ -690,9 +823,18 @@ func (w *Weighted) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
+ 		if index >= 0 && index < len(w.memberConns) {
  			w.memberConns[index].Delete(wrapped)
  		}
  	}
@@ -369,7 +502,7 @@ index b1df0a58d..7bb1c9369 100644
  	return wrapped, nil
  }
  
-@@ -752,8 +894,20 @@ func (w *Weighted) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn,
+@@ -752,8 +935,28 @@ func (w *Weighted) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn,
  // with their own close callback).
  type weightedCountedConn struct {
  	net.Conn
@@ -379,6 +512,14 @@ index b1df0a58d..7bb1c9369 100644
 +	release      func()
 +	responseOnce sync.Once
 +	onResponse   func()
++	onWrite      func()
++}
++
++func (c *weightedCountedConn) Write(p []byte) (int, error) {
++	if c.onWrite != nil {
++		c.onWrite()
++	}
++	return c.Conn.Write(p)
 +}
 +
 +// Opening a lazy proxy or mux stream only allocates local state. Credit
@@ -392,7 +533,7 @@ index b1df0a58d..7bb1c9369 100644
  }
  
  func (c *weightedCountedConn) Close() error {
-@@ -780,8 +934,26 @@ func (c *weightedCountedConn) Upstream() any {
+@@ -780,8 +983,41 @@ func (c *weightedCountedConn) Upstream() any {
  // group, while TCP was unaffected since it doesn't re-address per packet.
  type weightedCountedPacketConn struct {
  	N.NetPacketConn
@@ -402,6 +543,21 @@ index b1df0a58d..7bb1c9369 100644
 +	release      func()
 +	responseOnce sync.Once
 +	onResponse   func()
++	onWrite      func()
++}
++
++func (c *weightedCountedPacketConn) WriteTo(p []byte, destination net.Addr) (int, error) {
++	if c.onWrite != nil {
++		c.onWrite()
++	}
++	return c.NetPacketConn.WriteTo(p, destination)
++}
++
++func (c *weightedCountedPacketConn) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
++	if c.onWrite != nil {
++		c.onWrite()
++	}
++	return c.NetPacketConn.WritePacket(buffer, destination)
 +}
 +
 +func (c *weightedCountedPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
@@ -421,6 +577,337 @@ index b1df0a58d..7bb1c9369 100644
  }
  
  func (c *weightedCountedPacketConn) Close() error {
+diff --git a/protocol/group/weighted_latency.go b/protocol/group/weighted_latency.go
+new file mode 100644
+index 000000000..52f908d36
+--- /dev/null
++++ b/protocol/group/weighted_latency.go
+@@ -0,0 +1,95 @@
++package group
++
++import (
++	"sync"
++	"sync/atomic"
++	"time"
++)
++
++// Active browser connections can remain idle for minutes. Only connections
++// awaiting their first response contribute to setup pressure on a path.
++type responseStats struct {
++	delay      atomic.Int64
++	observedAt atomic.Int64
++	pending    atomic.Int64
++}
++
++func (s *responseStats) observe(sample time.Duration) {
++	if sample < time.Millisecond {
++		sample = time.Millisecond
++	}
++	for {
++		old := s.delay.Load()
++		next := int64(sample)
++		// React immediately to a slower response, recover gradually as faster
++		// responses arrive. A local mux allocation is never a sample.
++		if old > next {
++			next = old - (old-next)/8
++		}
++		if s.delay.CompareAndSwap(old, next) {
++			break
++		}
++	}
++	s.observedAt.Store(time.Now().UnixNano())
++}
++
++func (s *responseStats) score(now time.Time) (float64, bool) {
++	delay := s.delay.Load()
++	if delay == 0 || now.Sub(time.Unix(0, s.observedAt.Load())) > time.Minute {
++		return 0, false
++	}
++	pending := s.pending.Load()
++	if pending < 0 {
++		pending = 0
++	}
++	return float64(delay) * float64(pending+1), true
++}
++
++func (w *Weighted) ensureResponseStatsLocked() {
++	if len(w.responses) == len(w.health) {
++		return
++	}
++	w.responses = make([]*responseStats, len(w.health))
++	for i := range w.responses {
++		w.responses[i] = new(responseStats)
++	}
++}
++
++func (w *Weighted) responseStats(index int) *responseStats {
++	w.pickMu.Lock()
++	defer w.pickMu.Unlock()
++	w.ensureResponseStatsLocked()
++	return w.responses[index]
++}
++
++type responseTracker struct {
++	stats   *responseStats
++	created time.Time
++	written atomic.Pointer[time.Time]
++	once    sync.Once
++}
++
++func newResponseTracker(stats *responseStats) *responseTracker {
++	stats.pending.Add(1)
++	return &responseTracker{stats: stats, created: time.Now()}
++}
++
++func (t *responseTracker) write() {
++	if t.written.Load() == nil {
++		now := time.Now()
++		t.written.CompareAndSwap(nil, &now)
++	}
++}
++
++func (t *responseTracker) response() {
++	t.once.Do(func() {
++		t.stats.pending.Add(-1)
++		start := t.created
++		if written := t.written.Load(); written != nil {
++			start = *written
++		}
++		t.stats.observe(time.Since(start))
++	})
++}
++
++func (t *responseTracker) close() { t.once.Do(func() { t.stats.pending.Add(-1) }) }
+diff --git a/protocol/group/weighted_latency_test.go b/protocol/group/weighted_latency_test.go
+new file mode 100644
+index 000000000..1f390e6dc
+--- /dev/null
++++ b/protocol/group/weighted_latency_test.go
+@@ -0,0 +1,224 @@
++package group
++
++import (
++	"context"
++	"errors"
++	M "github.com/sagernet/sing/common/metadata"
++	"io"
++	"net"
++	"sync"
++	"testing"
++	"time"
++)
++
++type latencyOutbound struct {
++	scriptedOutbound
++	responseDelay time.Duration
++}
++
++func TestResponsePressureStillUsesSecondNetwork(t *testing.T) {
++	w := newHedgeTestWeighted(&scriptedOutbound{}, &scriptedOutbound{})
++	w.responseStats(0).observe(10 * time.Millisecond)
++	w.responseStats(1).observe(40 * time.Millisecond)
++	w.responseStats(0).pending.Store(5)
++	index, _, err := w.pick()
++	if err != nil {
++		t.Fatal(err)
++	}
++	w.release(index)
++	if index != 1 {
++		t.Fatal("pending responses on faster path did not shift work to second network")
++	}
++	w.priority = true
++	index, _, err = w.pick()
++	if err != nil {
++		t.Fatal(err)
++	}
++	w.release(index)
++	if index != 0 {
++		t.Fatal("response scoring changed strict priority semantics")
++	}
++}
++
++func TestResponseTrackerExcludesApplicationIdleTime(t *testing.T) {
++	stats := new(responseStats)
++	tracker := newResponseTracker(stats)
++	tracker.created = time.Now().Add(-time.Minute)
++	tracker.write()
++	tracker.response()
++	tracker.close()
++	if stats.pending.Load() != 0 {
++		t.Fatal("pending count leaked or was released twice")
++	}
++	if stats.delay.Load() >= int64(time.Second) {
++		t.Fatal("application idle time became a network delay sample")
++	}
++}
++
++func TestResponseTrackerConcurrentCloseAndResponse(t *testing.T) {
++	stats := new(responseStats)
++	for i := 0; i < 100; i++ {
++		tracker := newResponseTracker(stats)
++		var done sync.WaitGroup
++		done.Add(3)
++		go func() { defer done.Done(); tracker.write() }()
++		go func() { defer done.Done(); tracker.response() }()
++		go func() { defer done.Done(); tracker.close() }()
++		done.Wait()
++	}
++	if stats.pending.Load() != 0 {
++		t.Fatal("concurrent close/response corrupted pending count")
++	}
++}
++
++func TestNetworkReplacementDiscardsOldLatency(t *testing.T) {
++	w := newHedgeTestWeighted(&scriptedOutbound{}, &scriptedOutbound{})
++	w.responseStats(0).observe(time.Second)
++	w.responseStats(1).observe(10 * time.Millisecond)
++	w.UpdateAvailability(0, false)
++	w.UpdateAvailability(0, true)
++	if _, known := w.responseStats(0).score(time.Now()); known {
++		t.Fatal("replacement inherited old network delay")
++	}
++	if _, known := w.responseStats(1).score(time.Now()); !known {
++		t.Fatal("unaffected network lost its delay sample")
++	}
++	if _, known := w.responseStats(1).score(time.Now().Add(2 * time.Minute)); known {
++		t.Fatal("stale delay was trusted indefinitely")
++	}
++}
++
++func (f *latencyOutbound) DialContext(ctx context.Context, _ string, _ M.Socksaddr) (net.Conn, error) {
++	f.calls.Add(1)
++	client, server := net.Pipe()
++	go func() {
++		defer server.Close()
++		var request [1]byte
++		if _, err := io.ReadFull(server, request[:]); err != nil {
++			return
++		}
++		select {
++		case <-time.After(f.responseDelay):
++		case <-ctx.Done():
++			return
++		}
++		server.Write([]byte{1})
++	}()
++	return client, nil
++}
++
++func TestIdleFastConnectionDoesNotPushBrowsingToSlowNetwork(t *testing.T) {
++	fast := &latencyOutbound{responseDelay: 5 * time.Millisecond}
++	slow := &latencyOutbound{responseDelay: 80 * time.Millisecond}
++	w := newHedgeTestWeighted(&scriptedOutbound{}, &scriptedOutbound{})
++	w.members[0].outbound = fast
++	w.members[1].outbound = slow
++	// Learn one real response on each network. Keep the fast connection
++	// allocated, like a browser's established idle connection.
++	w.priority = true
++	first, err := w.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.com:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer first.Close()
++	first.SetDeadline(time.Now().Add(time.Second))
++	if _, err = first.Write([]byte{1}); err != nil {
++		t.Fatal(err)
++	}
++	if _, err = first.Read(make([]byte, 1)); err != nil {
++		t.Fatal(err)
++	}
++	w.priority = false
++	// Occupy one response slot briefly so the still-unmeasured second path
++	// gets a real sample instead of assuming that it is fast.
++	w.priority = true
++	pending, err := w.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.com:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer pending.Close()
++	w.priority = false
++	second, err := w.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.com:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	second.SetDeadline(time.Now().Add(time.Second))
++	if _, err = second.Write([]byte{1}); err != nil {
++		t.Fatal(err)
++	}
++	if _, err = second.Read(make([]byte, 1)); err != nil {
++		t.Fatal(err)
++	}
++	second.Close()
++	pending.Close()
++	next, err := w.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.com:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer next.Close()
++	if w.lastPicked.Load() != 0 {
++		t.Fatal("idle fast connection caused browsing to select the proven slow network")
++	}
++}
++
++func TestKnownResponsivePathIsPreferredOverUnmeasuredIdlePath(t *testing.T) {
++	w := newHedgeTestWeighted(&scriptedOutbound{}, &scriptedOutbound{})
++	w.members[0].outbound = &latencyOutbound{responseDelay: 5 * time.Millisecond}
++	w.priority = true
++	first, err := w.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.com:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer first.Close()
++	first.SetDeadline(time.Now().Add(time.Second))
++	first.Write([]byte{1})
++	if _, err = first.Read(make([]byte, 1)); err != nil {
++		t.Fatal(err)
++	}
++	w.priority = false
++	next, err := w.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.com:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer next.Close()
++	if w.lastPicked.Load() != 0 {
++		t.Fatal("unmeasured idle path displaced a proven responsive path")
++	}
++}
++
++func TestPendingResponseCountReleasedAfterHedgeAndDialFailure(t *testing.T) {
++	w := newHedgeTestWeighted(&scriptedOutbound{delay: time.Second}, &scriptedOutbound{})
++	w.limiters[1].acquire()
++	conn, err := w.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.com:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	conn.Close()
++	deadline := time.Now().Add(time.Second)
++	for (w.responseStats(0).pending.Load() != 0 || w.responseStats(1).pending.Load() != 0) && time.Now().Before(deadline) {
++		time.Sleep(time.Millisecond)
++	}
++	if w.responseStats(0).pending.Load() != 0 || w.responseStats(1).pending.Load() != 0 {
++		t.Fatal("canceled hedge leaked setup pressure")
++	}
++	failed := newHedgeTestWeighted(&scriptedOutbound{err: errors.New("dial failed")}, &scriptedOutbound{err: errors.New("dial failed")})
++	if conn, err = failed.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.com:443")); err == nil {
++		conn.Close()
++		t.Fatal("expected failure")
++	}
++	if failed.responseStats(0).pending.Load() != 0 || failed.responseStats(1).pending.Load() != 0 {
++		t.Fatal("failed dial leaked setup pressure")
++	}
++}
++
++func TestLateOldNetworkResponseDoesNotRestoreLatency(t *testing.T) {
++	w := newHedgeTestWeighted(&scriptedOutbound{}, &scriptedOutbound{})
++	old := newResponseTracker(w.responseStats(0))
++	w.UpdateAvailability(0, false)
++	w.UpdateAvailability(0, true)
++	old.write()
++	old.response()
++	if _, known := w.responseStats(0).score(time.Now()); known {
++		t.Fatal("late response contaminated replacement network latency")
++	}
++}
 diff --git a/protocol/group/weighted_network_recovery_test.go b/protocol/group/weighted_network_recovery_test.go
 new file mode 100644
 index 000000000..be25e8793

@@ -1,3 +1,16 @@
+## v1.4.36 local candidate ? response-aware network selection
+
+- Select load-balance paths using recent first-response delay and pending connection attempts. Idle established connections no longer make a responsive path look busy.
+- Prefer a measured responsive path over an unmeasured idle path; account for pending attempts before dialing completes, and release counts on failure/cancellation.
+- Isolate latency measurements across network replacements, including late callbacks; expire measurements after one minute. Preserve strict-priority DNS/QUIC behavior.
+- Preserve FakeDNS, disabled real-DNS caching, Resolve Destination off, mux and QUIC.
+
+Regression tests reproduced both idle-connection and unmeasured-path selection defects before the fixes. Race-enabled native tests and four-ABI debug builds pass. Patch application against the pinned core and packaged native binary hashes were verified. The revised arm64 build is installed on the test phone (version code 265).
+
+Short phone measurements: the earlier 1.4.35 Google search sample completed 11/12 requests (one five-second timeout; successful median first response 615 ms). The final 1.4.36 sample completed 12/12 (median 324 ms, maximum 1.403 s); single-profile requests completed 12/12 (median 414 ms, maximum 625 ms). A cold four-request burst completed without failure, with Google first response 1.005 s versus 2.455 s in the first 1.4.36 revision. Samples were sequential in time and are not controlled proof of a universal speed increase.
+
+Direct TUN/FakeDNS checks returned local DNS answers in 2?3 ms. Eight TCP Google search responses returned 200; eight HTTP/3 responses returned Google's 302 consent redirect. Google and YouTube HTTP/3 robots checks returned 200. Remaining handshake spikes reached 1.7 s. A QUIC-only helper timed out when following the consent redirect; that helper does not reproduce browser protocol fallback. Four background TUN handshake-report errors also remain in the log and are not proven fixed by this change. This candidate is not a public stable release, a completed Chrome/video endurance test, or a guarantee of zero latency.
+
 ## v1.4.35 local candidate — browsing validation incomplete
 
 - Cancel pending attempts on a lost physical network and reconsider a second network that appears after the initial hedge timer.
