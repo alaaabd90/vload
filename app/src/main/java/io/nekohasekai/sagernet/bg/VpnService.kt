@@ -22,6 +22,11 @@ import io.nekohasekai.sagernet.utils.NetworkSelector
 import io.nekohasekai.sagernet.utils.Subnet
 import io.nekohasekai.sagernet.utils.VloadNetworkController
 import libcore.Libcore
+import java.util.concurrent.atomic.AtomicLongArray
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import android.net.VpnService as BaseVpnService
 
 class VpnService : BaseVpnService(),
@@ -49,12 +54,10 @@ class VpnService : BaseVpnService(),
     var vloadNetworkController: VloadNetworkController? = null
         private set
 
-    // Last Network object seen per slot, so the controller callback (which
-    // now also fires on every onCapabilitiesChanged, not just onAvailable)
-    // can tell "this slot's network actually changed/was lost" apart from
-    // "the same network just refreshed its capabilities" before deciding
-    // whether a connection reset is warranted.
-    private val lastSlotNetwork = arrayOfNulls<Network>(2)
+    // A slot stays unavailable until cleanup of its previous network finishes.
+    // Generations prevent queued cleanup from re-enabling an obsolete network.
+    private val slotGeneration = AtomicLongArray(2)
+    private val slotResetLocks = arrayOf(Mutex(), Mutex())
 
     override suspend fun startProcesses() {
         DataStore.vpnService = this
@@ -63,6 +66,8 @@ class VpnService : BaseVpnService(),
     }
 
     private fun setupVloadNetworksIfNeeded() {
+        slotGeneration.incrementAndGet(0)
+        slotGeneration.incrementAndGet(1)
         vloadNetworkController?.stopAll()
         vloadNetworkController = null
 
@@ -76,65 +81,30 @@ class VpnService : BaseVpnService(),
             NetworkSelector.WiFi
         }
 
-        lastSlotNetwork[0] = null
-        lastSlotNetwork[1] = null
         val controller = VloadNetworkController { slot, network ->
             val proxy = data.proxy
             val delivered = proxy?.takeIf { it.isInitialized() }
             Logs.i("vload: slot $slot network=${network?.toString() ?: "lost"} deliveredToBox=${delivered != null}")
-            delivered?.box?.updateNetworkAvailability(slot, network != null)
+            val generation = slotGeneration.incrementAndGet(slot)
+            // Invalidate dials immediately; never advertise the new network
+            // before asynchronous cleanup has finished closing the old pool.
+            delivered?.box?.updateNetworkAvailability(slot, false)
             updateUnderlyingNetwork()
-
-            // updateNetworkAvailability above only affects which slot pick()
-            // is willing to choose for *new* connections; it does nothing
-            // about connections that were already open on this slot before
-            // its network changed underneath them. Without an explicit
-            // reset those just sit there broken until the user manually
-            // reconnects - the same failure mode the single-network path
-            // (BaseService.preInit) already guards against, but this
-            // dual-network slot tracker runs entirely separately from that
-            // and never called into it. Only reset on a genuine change (a
-            // different Network object, or the slot's network being lost),
-            // not on every capabilities refresh of the same still-current
-            // network, so a routine signal-strength update doesn't thrash
-            // every open connection on the *other*, unaffected slot too.
-            //
-            // Resetting used to mean Libcore.resetAllConnections(true) - a
-            // global close of every connection on the whole box, not just
-            // this slot. Confirmed live: a routine cell handover or Wi-Fi
-            // AP roam on ONE slot was closing the OTHER, unaffected slot's
-            // perfectly healthy connections too (surfaced as pages
-            // "unexpectedly closed the connection" mid-browse for no
-            // apparent reason). resetSlotConnections closes only the
-            // connections actually dialed on the slot that changed.
-            val previous = lastSlotNetwork.getOrNull(slot)
-            lastSlotNetwork[slot] = network
-            val isFirstAcquisition = previous == null && network != null
-            if (previous != network && !isFirstAcquisition && delivered != null) {
-                Logs.i("vload: slot $slot network changed ($previous -> $network), resetting connections")
-                if (io.nekohasekai.sagernet.localtether.NetworkChangeSuppression.isActive) {
-                    // See NetworkChangeSuppression's doc comment: Local Shizuku
-                    // Tethering's hotspot restart can cause exactly this kind
-                    // of spurious per-slot network change on some devices.
-                    Logs.d("vload: slot $slot change ignored (local Shizuku tethering is restarting the hotspot)")
-                } else {
-                    // This slot's bound transport is gone. Invalidate its
-                    // pooled sessions even when global reset-on-change is off.
-                    runOnDefaultDispatcher {
-                      if (data.proxy !== delivered) return@runOnDefaultDispatcher
-                      val closed = delivered.box.resetSlotConnections(slot)
-                      if (closed < 0) {
-                        // Not a weighted (vload) outbound - shouldn't happen
-                        // since this controller only runs for Load Balance
-                        // profiles, but fall back to the global reset rather
-                        // than silently doing nothing. Logged because if this
-                        // ever fires in practice it means b.weighted was nil
-                        // for an active Load Balance session, which is itself
-                        // a bug worth knowing about, not just a theoretical
-                        // fallback.
-                        Logs.w("vload: resetSlotConnections($slot) returned negative (no weighted outbound?), falling back to global reset")
-                        Libcore.resetAllConnections(true)
-                      }
+            if (delivered != null) {
+                runOnDefaultDispatcher {
+                    slotResetLocks[slot].withLock {
+                        if (data.proxy !== delivered || slotGeneration.get(slot) != generation) return@withLock
+                        val closed = delivered.box.resetSlotConnections(slot)
+                        withContext(Dispatchers.Main.immediate) {
+                            if (data.proxy === delivered && slotGeneration.get(slot) == generation) {
+                                if (closed < 0) {
+                                    Logs.w("vload: slot $slot cleanup unavailable; keeping slot disabled")
+                                } else {
+                                    delivered.box.updateNetworkAvailability(slot, network != null)
+                                    Logs.i("vload: slot $slot cleanup complete, available=${network != null}, closed=$closed")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -161,7 +131,9 @@ class VpnService : BaseVpnService(),
         val pfd = ParcelFileDescriptor.adoptFd(fd)
         return try {
             network.bindSocket(pfd.fileDescriptor)
-            true
+            // Do not acknowledge a socket bound to a network that was
+            // replaced while Android performed the bind.
+            vloadNetworkController?.networkFor(slot) == network
         } catch (e: Exception) {
             Logs.w(e)
             false
@@ -185,6 +157,8 @@ class VpnService : BaseVpnService(),
     override fun killProcesses() {
         conn?.close()
         conn = null
+        slotGeneration.incrementAndGet(0)
+        slotGeneration.incrementAndGet(1)
         vloadNetworkController?.stopAll()
         vloadNetworkController = null
         super.killProcesses()

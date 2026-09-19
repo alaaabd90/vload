@@ -22,6 +22,7 @@ fi
 pushd sing-box
 git checkout "$COMMIT_SING_BOX"
 apply_local_patch "$PATCH_ROOT/sing-box-tls-nodelay.patch"
+apply_local_patch "$PATCH_ROOT/sing-box-network-recovery.patch"
 popd
 
 ####

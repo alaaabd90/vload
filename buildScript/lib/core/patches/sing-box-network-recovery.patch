@@ -1,0 +1,654 @@
+diff --git a/protocol/group/weighted.go b/protocol/group/weighted.go
+index b1df0a58d..7bb1c9369 100644
+--- a/protocol/group/weighted.go
++++ b/protocol/group/weighted.go
+@@ -13,6 +13,7 @@ import (
+ 	C "github.com/sagernet/sing-box/constant"
+ 	"github.com/sagernet/sing-box/log"
+ 	"github.com/sagernet/sing-box/option"
++	"github.com/sagernet/sing/common/buf"
+ 	"github.com/sagernet/sing/common/bufio"
+ 	E "github.com/sagernet/sing/common/exceptions"
+ 	"github.com/sagernet/sing/common/logger"
+@@ -31,6 +32,11 @@ var (
+ 	_ N.UDPConnectionHandlerEx = (*Weighted)(nil)
+ )
+ 
++type memberNetwork struct {
++	ctx    context.Context
++	cancel context.CancelFunc
++}
++
+ type weightedMember struct {
+ 	tag      string
+ 	outbound adapter.Outbound
+@@ -124,6 +130,9 @@ type Weighted struct {
+ 	// Physical availability is separate from circuit-breaker cooldown. A
+ 	// fallback probe or an old recovery timer cannot resurrect a lost radio.
+ 	unavailableNetworks sync.Map // member index -> struct{}
++	networkMu           sync.Mutex
++	networkEpochs       map[int]memberNetwork
++	networkChanged      chan struct{}
+ 	// hedgeLossStreak/hedgeSuppressedUntil let a member whose hedge races
+ 	// are essentially always lost - not failed, just consistently slower
+ 	// than whichever other member keeps winning for the same destination -
+@@ -236,11 +245,32 @@ func (w *Weighted) UpdateAvailability(index int, available bool) {
+ 	if index < 0 || index >= len(w.health) {
+ 		return
+ 	}
++	w.networkMu.Lock()
+ 	if available {
+ 		w.unavailableNetworks.Delete(index)
+ 	} else {
+ 		w.unavailableNetworks.Store(index, struct{}{})
+ 	}
++	if w.networkEpochs == nil {
++		w.networkEpochs = make(map[int]memberNetwork)
++	}
++	if previous, ok := w.networkEpochs[index]; ok {
++		previous.cancel()
++	}
++	parent := w.ctx
++	if parent == nil {
++		parent = context.Background()
++	}
++	epoch, cancel := context.WithCancel(parent)
++	if !available {
++		cancel()
++	}
++	w.networkEpochs[index] = memberNetwork{epoch, cancel}
++	if w.networkChanged != nil {
++		close(w.networkChanged)
++	}
++	w.networkChanged = make(chan struct{})
++	w.networkMu.Unlock()
+ 	w.logger.Info("vload: slot ", index, " availability -> ", available)
+ 	w.picker.SetAvailable(index, available)
+ 	if index >= 0 && index < len(w.health) {
+@@ -257,13 +287,44 @@ func (w *Weighted) UpdateAvailability(index int, available bool) {
+ 	}
+ }
+ 
++// A pending dial follows its physical network's lifetime. A new epoch must
++// never inherit a cancellation or outcome from the previous Android Network.
++func (w *Weighted) memberNetworkContext(index int) context.Context {
++	w.networkMu.Lock()
++	defer w.networkMu.Unlock()
++	if w.networkEpochs == nil {
++		w.networkEpochs = make(map[int]memberNetwork)
++	}
++	if epoch, ok := w.networkEpochs[index]; ok {
++		return epoch.ctx
++	}
++	parent := w.ctx
++	if parent == nil {
++		parent = context.Background()
++	}
++	ctx, cancel := context.WithCancel(parent)
++	if !w.networkAvailable(index) {
++		cancel()
++	}
++	w.networkEpochs[index] = memberNetwork{ctx, cancel}
++	return ctx
++}
++func (w *Weighted) networkEvents() <-chan struct{} {
++	w.networkMu.Lock()
++	defer w.networkMu.Unlock()
++	if w.networkChanged == nil {
++		w.networkChanged = make(chan struct{})
++	}
++	return w.networkChanged
++}
++
+ func (w *Weighted) networkAvailable(index int) bool {
+ 	_, unavailable := w.unavailableNetworks.Load(index)
+ 	return !unavailable
+ }
+ 
+ // recordResult feeds one connection's outcome into index's circuit breaker.
+-// nil means it closed cleanly; any other value counts as a failure. Tripping
++// nil means a response arrived; a dial error counts as a failure. Tripping
+ // the breaker excludes the member via the same SetAvailable path an
+ // external monitor would use, and schedules its own recovery - this needs
+ // no external signal at all to eventually retry a member that's recovered.
+@@ -482,9 +543,10 @@ func (w *Weighted) hedgeSuppressed(idx int) bool {
+ const hedgeDelay = 250 * time.Millisecond
+ 
+ type hedgeResult[T io.Closer] struct {
+-	index int
+-	conn  T
+-	err   error
++	networkCtx context.Context
++	index      int
++	conn       T
++	err        error
+ }
+ 
+ // hedgedPick races dial against the pick()-preferred member and, if that
+@@ -496,19 +558,30 @@ type hedgeResult[T io.Closer] struct {
+ // A race loser is never counted against its member's health (see
+ // abandonHedgeLoser): canceling mid-dial because the other side already won
+ // is our choice, not evidence the member is unhealthy.
+-func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context.Context, adapter.Outbound) (T, error)) (int, T, context.CancelFunc, error) {
++func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context.Context, adapter.Outbound) (T, error)) (int, T, context.CancelFunc, context.Context, error) {
+ 	var zero T
++	networkEvents := w.networkEvents()
+ 	primaryIdx, primaryMember, err := w.pick()
+ 	if err != nil {
+-		return -1, zero, nil, err
++		return -1, zero, nil, nil, err
+ 	}
+ 
+ 	start := func(idx int, member weightedMember) (<-chan hedgeResult[T], context.CancelFunc) {
+-		dialCtx, cancel := context.WithCancel(ctx)
++		networkCtx := w.memberNetworkContext(idx)
++		dialCtx, cancelDial := context.WithCancel(ctx)
++		stopNetworkCancel := context.AfterFunc(networkCtx, cancelDial)
++		if networkCtx.Err() != nil {
++			cancelDial()
++		}
++		cancel := func() { stopNetworkCancel(); cancelDial() }
+ 		ch := make(chan hedgeResult[T], 1)
+ 		go func() {
+-			conn, dialErr := dial(dialCtx, member.outbound)
+-			ch <- hedgeResult[T]{idx, conn, dialErr}
++			var conn T
++			dialErr := dialCtx.Err()
++			if dialErr == nil {
++				conn, dialErr = dial(dialCtx, member.outbound)
++			}
++			ch <- hedgeResult[T]{networkCtx: networkCtx, index: idx, conn: conn, err: dialErr}
+ 		}()
+ 		return ch, cancel
+ 	}
+@@ -528,6 +601,8 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+ 		}
+ 	}()
+ 
++	var primaryFailed, secondaryFailed bool
++	var secondaryEpoch context.Context
+ 	trySecondary := func() {
+ 		if secondaryCh != nil {
+ 			return
+@@ -536,6 +611,16 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+ 		if pickErr != nil {
+ 			return // nothing else available right now; keep waiting on primary
+ 		}
++		epoch := w.memberNetworkContext(idx)
++		if secondaryFailed && secondaryEpoch == epoch {
++			w.release(idx)
++			return
++		}
++		if secondaryCancel != nil {
++			secondaryCancel()
++		}
++		secondaryEpoch = epoch
++		secondaryFailed = false
+ 		secondaryCh, secondaryCancel = start(idx, member)
+ 	}
+ 
+@@ -545,18 +630,25 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+ 	// stays nil (never fires in the select below) so failover only ever
+ 	// triggers on an actual primary failure, further down.
+ 	var timerC <-chan time.Time
++	hedgeReady := false
+ 	if !w.priority {
+ 		timer := time.NewTimer(hedgeDelay)
+ 		defer timer.Stop()
+ 		timerC = timer.C
+ 	}
+ 
+-	var primaryFailed, secondaryFailed bool
+ 	for {
+ 		select {
+ 		case res := <-primaryCh:
+ 			primaryCh = nil
+-			w.recordResult(res.index, res.err)
++			if res.networkCtx.Err() != nil {
++				if res.err == nil {
++					res.conn.Close()
++				}
++				res.err = context.Canceled
++			} else if res.err != nil {
++				w.recordResult(res.index, res.err)
++			}
+ 			if res.err == nil {
+ 				w.recordHedgeOutcome(primaryIdx, true)
+ 				if secondaryCh != nil {
+@@ -567,7 +659,7 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+ 				// for their first write. The returned connection owns it now.
+ 				winnerCancel := primaryCancel
+ 				primaryCancel = nil
+-				return res.index, res.conn, winnerCancel, nil
++				return res.index, res.conn, winnerCancel, res.networkCtx, nil
+ 			}
+ 			// A genuine failure, not a cancellation - this attempt is done
+ 			// either way (we're either racing a different secondary or
+@@ -576,15 +668,22 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+ 			w.release(res.index)
+ 			primaryFailed = true
+ 			if secondaryFailed {
+-				return -1, zero, nil, res.err
++				return -1, zero, nil, nil, res.err
+ 			}
+ 			trySecondary()
+ 			if secondaryCh == nil {
+-				return -1, zero, nil, res.err
++				return -1, zero, nil, nil, res.err
+ 			}
+ 		case res := <-secondaryCh:
+ 			secondaryCh = nil
+-			w.recordResult(res.index, res.err)
++			if res.networkCtx.Err() != nil {
++				if res.err == nil {
++					res.conn.Close()
++				}
++				res.err = context.Canceled
++			} else if res.err != nil {
++				w.recordResult(res.index, res.err)
++			}
+ 			if res.err == nil {
+ 				// The secondary won a race the primary was still in when
+ 				// this fired - i.e. hedging actually mattered here, not
+@@ -601,14 +700,29 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+ 				abandonHedgeLoser(w, primaryCh)
+ 				winnerCancel := secondaryCancel
+ 				secondaryCancel = nil
+-				return res.index, res.conn, winnerCancel, nil
++				return res.index, res.conn, winnerCancel, res.networkCtx, nil
+ 			}
+ 			w.release(res.index)
+ 			secondaryFailed = true
++			// A replacement can arrive before the canceled old dial returns.
++			// Its notification then sees secondaryCh still occupied. Retry only
++			// on a new physical-network epoch, never on an ordinary dial error.
++			if res.networkCtx != w.memberNetworkContext(res.index) && w.networkAvailable(res.index) {
++				trySecondary()
++				if secondaryCh != nil {
++					continue
++				}
++			}
+ 			if primaryFailed {
+-				return -1, zero, nil, res.err
++				return -1, zero, nil, nil, res.err
++			}
++		case <-networkEvents:
++			networkEvents = w.networkEvents()
++			if !w.networkAvailable(primaryIdx) || (!w.priority && hedgeReady && !w.hedgeSuppressed(primaryIdx)) {
++				trySecondary()
+ 			}
+ 		case <-timerC:
++			hedgeReady = true
+ 			// Only the speculative "primary might just be slow" hedge is
+ 			// gated - a primary that genuinely fails still hedges
+ 			// unconditionally via the primaryFailed branch above,
+@@ -629,7 +743,7 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+ 				secondaryCancel()
+ 				abandonHedgeLoser(w, secondaryCh)
+ 			}
+-			return -1, zero, nil, ctx.Err()
++			return -1, zero, nil, nil, ctx.Err()
+ 		}
+ 	}
+ }
+@@ -653,13 +767,18 @@ func abandonHedgeLoser[T io.Closer](w *Weighted, ch <-chan hedgeResult[T]) {
+ }
+ 
+ func (w *Weighted) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+-	index, conn, cancel, err := hedgedPick(w, ctx, func(dialCtx context.Context, ob adapter.Outbound) (net.Conn, error) {
++	index, conn, cancel, networkCtx, err := hedgedPick(w, ctx, func(dialCtx context.Context, ob adapter.Outbound) (net.Conn, error) {
+ 		return ob.DialContext(dialCtx, network, destination)
+ 	})
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	wrapped := &weightedCountedConn{Conn: conn}
++	wrapped.onResponse = func() {
++		if ctx.Err() == nil && networkCtx.Err() == nil {
++			w.recordResult(index, nil)
++		}
++	}
+ 	wrapped.release = func() {
+ 		cancel()
+ 		w.release(index)
+@@ -667,14 +786,23 @@ func (w *Weighted) DialContext(ctx context.Context, network string, destination
+ 			w.memberConns[index].Delete(wrapped)
+ 		}
+ 	}
+-	if index >= 0 && index < len(w.memberConns) {
++	// Register under the same lock as loss notifications, so cleanup cannot
++	// miss a dial that completes concurrently with a network replacement.
++	w.networkMu.Lock()
++	stale := networkCtx.Err() != nil
++	if !stale && index >= 0 && index < len(w.memberConns) {
+ 		w.memberConns[index].Store(wrapped, struct{}{})
+ 	}
++	w.networkMu.Unlock()
++	if stale {
++		wrapped.Close()
++		return nil, context.Canceled
++	}
+ 	return wrapped, nil
+ }
+ 
+ func (w *Weighted) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+-	index, conn, cancel, err := hedgedPick(w, ctx, func(dialCtx context.Context, ob adapter.Outbound) (net.PacketConn, error) {
++	index, conn, cancel, networkCtx, err := hedgedPick(w, ctx, func(dialCtx context.Context, ob adapter.Outbound) (net.PacketConn, error) {
+ 		return ob.ListenPacket(dialCtx, destination)
+ 	})
+ 	if err != nil {
+@@ -683,6 +811,11 @@ func (w *Weighted) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
+ 	// bufio.NewPacketConn normalizes conn to N.NetPacketConn *before* it gets
+ 	// embedded below - see the type's doc comment for why this matters.
+ 	wrapped := &weightedCountedPacketConn{NetPacketConn: bufio.NewPacketConn(conn)}
++	wrapped.onResponse = func() {
++		if ctx.Err() == nil && networkCtx.Err() == nil {
++			w.recordResult(index, nil)
++		}
++	}
+ 	wrapped.release = func() {
+ 		cancel()
+ 		w.release(index)
+@@ -690,9 +823,18 @@ func (w *Weighted) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
+ 			w.memberConns[index].Delete(wrapped)
+ 		}
+ 	}
+-	if index >= 0 && index < len(w.memberConns) {
++	// Register under the same lock as loss notifications, so cleanup cannot
++	// miss a dial that completes concurrently with a network replacement.
++	w.networkMu.Lock()
++	stale := networkCtx.Err() != nil
++	if !stale && index >= 0 && index < len(w.memberConns) {
+ 		w.memberConns[index].Store(wrapped, struct{}{})
+ 	}
++	w.networkMu.Unlock()
++	if stale {
++		wrapped.Close()
++		return nil, context.Canceled
++	}
+ 	return wrapped, nil
+ }
+ 
+@@ -752,8 +894,20 @@ func (w *Weighted) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn,
+ // with their own close callback).
+ type weightedCountedConn struct {
+ 	net.Conn
+-	once    sync.Once
+-	release func()
++	once         sync.Once
++	release      func()
++	responseOnce sync.Once
++	onResponse   func()
++}
++
++// Opening a lazy proxy or mux stream only allocates local state. Credit
++// capacity and network recovery after a real response, not that allocation.
++func (c *weightedCountedConn) Read(p []byte) (int, error) {
++	n, err := c.Conn.Read(p)
++	if n > 0 && c.onResponse != nil {
++		c.responseOnce.Do(c.onResponse)
++	}
++	return n, err
+ }
+ 
+ func (c *weightedCountedConn) Close() error {
+@@ -780,8 +934,26 @@ func (c *weightedCountedConn) Upstream() any {
+ // group, while TCP was unaffected since it doesn't re-address per packet.
+ type weightedCountedPacketConn struct {
+ 	N.NetPacketConn
+-	once    sync.Once
+-	release func()
++	once         sync.Once
++	release      func()
++	responseOnce sync.Once
++	onResponse   func()
++}
++
++func (c *weightedCountedPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
++	n, addr, err := c.NetPacketConn.ReadFrom(p)
++	if err == nil && c.onResponse != nil {
++		c.responseOnce.Do(c.onResponse)
++	}
++	return n, addr, err
++}
++
++func (c *weightedCountedPacketConn) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, error) {
++	destination, err := c.NetPacketConn.ReadPacket(buffer)
++	if err == nil && c.onResponse != nil {
++		c.responseOnce.Do(c.onResponse)
++	}
++	return destination, err
+ }
+ 
+ func (c *weightedCountedPacketConn) Close() error {
+diff --git a/protocol/group/weighted_network_recovery_test.go b/protocol/group/weighted_network_recovery_test.go
+new file mode 100644
+index 000000000..be25e8793
+--- /dev/null
++++ b/protocol/group/weighted_network_recovery_test.go
+@@ -0,0 +1,225 @@
++package group
++
++import (
++	"context"
++	"github.com/sagernet/sing/common/buf"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	"net"
++	"testing"
++	"time"
++)
++
++type replacedNetworkOutbound struct {
++	scriptedOutbound
++	started chan struct{}
++}
++
++func (f *replacedNetworkOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
++	if f.calls.Add(1) == 1 {
++		close(f.started)
++		<-ctx.Done()
++		// Android can publish the replacement before the old dial unwinds.
++		time.Sleep(100 * time.Millisecond)
++		return nil, ctx.Err()
++	}
++	client, server := net.Pipe()
++	server.Close()
++	return client, nil
++}
++
++func TestSecondaryNetworkReplacementDuringPendingDial(t *testing.T) {
++	w := newHedgeTestWeighted(&scriptedOutbound{delay: 5 * time.Second}, &scriptedOutbound{})
++	replacement := &replacedNetworkOutbound{started: make(chan struct{})}
++	w.members[1].outbound = replacement
++	w.limiters[0].limit.Store(100)
++	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
++	defer cancel()
++	done := make(chan error, 1)
++	go func() {
++		conn, err := w.DialContext(ctx, "tcp", M.ParseSocksaddr("example.com:443"))
++		if conn != nil {
++			conn.Close()
++		}
++		done <- err
++	}()
++	select {
++	case <-replacement.started:
++	case <-ctx.Done():
++		t.Fatal("secondary dial did not start")
++	}
++	w.UpdateAvailability(1, false)
++	w.UpdateAvailability(1, true)
++	select {
++	case err := <-done:
++		if err != nil {
++			t.Fatal(err)
++		}
++	case <-time.After(500 * time.Millisecond):
++		t.Fatal("replacement network was ignored while old dial unwound")
++	}
++}
++
++func TestNetworkAppearingAfterHedgeTimerIsUsed(t *testing.T) {
++	slow := &scriptedOutbound{tag: "a", delay: 5 * time.Second}
++	fast := &scriptedOutbound{tag: "b"}
++	w := newHedgeTestWeighted(slow, fast)
++	w.UpdateAvailability(1, false)
++	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
++	defer cancel()
++	done := make(chan error, 1)
++	go func() {
++		conn, err := w.DialContext(ctx, "tcp", M.ParseSocksaddr("example.com:443"))
++		if conn != nil {
++			conn.Close()
++		}
++		done <- err
++	}()
++	time.Sleep(hedgeDelay + 100*time.Millisecond)
++	w.UpdateAvailability(1, true)
++	select {
++	case err := <-done:
++		if err != nil {
++			t.Fatal(err)
++		}
++	case <-time.After(400 * time.Millisecond):
++		t.Fatal("newly available network was ignored after hedge timer")
++	}
++}
++func TestNetworkLossCancelsPendingDial(t *testing.T) {
++	slow := &scriptedOutbound{tag: "a", delay: 5 * time.Second}
++	fast := &scriptedOutbound{tag: "b"}
++	w := newPriorityTestWeighted(slow, fast)
++	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
++	defer cancel()
++	done := make(chan error, 1)
++	go func() {
++		conn, err := w.DialContext(ctx, "tcp", M.ParseSocksaddr("example.com:443"))
++		if conn != nil {
++			conn.Close()
++		}
++		done <- err
++	}()
++	deadline := time.Now().Add(time.Second)
++	for slow.calls.Load() == 0 && time.Now().Before(deadline) {
++		time.Sleep(time.Millisecond)
++	}
++	w.UpdateAvailability(0, false)
++	select {
++	case err := <-done:
++		if err != nil {
++			t.Fatal(err)
++		}
++	case <-time.After(300 * time.Millisecond):
++		t.Fatal("lost network dial continued instead of failing over")
++	}
++}
++
++func TestNetworkEpochDoesNotCancelOtherSlot(t *testing.T) {
++	w := newHedgeTestWeighted(&scriptedOutbound{tag: "a"}, &scriptedOutbound{tag: "b"})
++	oldA := w.memberNetworkContext(0)
++	oldB := w.memberNetworkContext(1)
++	w.UpdateAvailability(0, false)
++	if oldA.Err() == nil {
++		t.Fatal("lost network context survived")
++	}
++	if oldB.Err() != nil {
++		t.Fatal("healthy other slot was canceled")
++	}
++	w.UpdateAvailability(0, true)
++	newA := w.memberNetworkContext(0)
++	if newA == oldA || newA.Err() != nil {
++		t.Fatal("recovered network inherited old cancellation")
++	}
++	w.UpdateAvailability(0, false)
++	if newA.Err() == nil {
++		t.Fatal("second loss did not cancel recovered network")
++	}
++	if oldB.Err() != nil {
++		t.Fatal("second loss canceled other slot")
++	}
++}
++
++func TestOpeningStreamDoesNotConfirmNetworkRecovery(t *testing.T) {
++	w := newPriorityTestWeighted(&scriptedOutbound{}, &scriptedOutbound{})
++	w.health[0].consecutiveFailures.Store(2)
++	conn, err := w.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.com:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer conn.Close()
++	if w.health[0].consecutiveFailures.Load() != 2 || w.health[0].consecutiveSuccesses.Load() != 0 {
++		t.Fatal("opening a stream without receiving a response falsely confirmed network health")
++	}
++}
++
++type responseOutbound struct {
++	scriptedOutbound
++	peer chan net.Conn
++}
++
++func (f *responseOutbound) DialContext(context.Context, string, M.Socksaddr) (net.Conn, error) {
++	client, server := net.Pipe()
++	f.peer <- server
++	return client, nil
++}
++
++func TestTCPResponseConfirmsHealthOnce(t *testing.T) {
++	w := newPriorityTestWeighted(&scriptedOutbound{}, &scriptedOutbound{})
++	outbound := &responseOutbound{peer: make(chan net.Conn, 1)}
++	w.members[0].outbound = outbound
++	w.health[0].consecutiveFailures.Store(2)
++	conn, err := w.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.com:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer conn.Close()
++	peer := <-outbound.peer
++	defer peer.Close()
++	conn.SetReadDeadline(time.Now().Add(time.Second))
++	go func() { peer.Write([]byte("ok")) }()
++	for i := 0; i < 2; i++ {
++		if _, err = conn.Read(make([]byte, 1)); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if w.health[0].consecutiveFailures.Load() != 0 || w.health[0].consecutiveSuccesses.Load() != 1 {
++		t.Fatal("real response must credit health exactly once")
++	}
++}
++
++func TestUDPResponseConfirmsHealthOnceAcrossReadAPIs(t *testing.T) {
++	w := newPriorityTestWeighted(&scriptedOutbound{}, &scriptedOutbound{})
++	w.health[0].consecutiveFailures.Store(2)
++	conn, err := w.ListenPacket(context.Background(), M.ParseSocksaddr("example.com:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer conn.Close()
++	if w.health[0].consecutiveFailures.Load() != 2 {
++		t.Fatal("UDP allocation falsely credited health")
++	}
++	peer, err := net.Dial("udp", conn.LocalAddr().String())
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer peer.Close()
++	conn.SetReadDeadline(time.Now().Add(time.Second))
++	if _, err = peer.Write([]byte("one")); err != nil {
++		t.Fatal(err)
++	}
++	if _, _, err = conn.ReadFrom(make([]byte, 16)); err != nil {
++		t.Fatal(err)
++	}
++	if _, err = peer.Write([]byte("two")); err != nil {
++		t.Fatal(err)
++	}
++	buffer := buf.NewSize(16)
++	defer buffer.Release()
++	if _, err = conn.(N.NetPacketConn).ReadPacket(buffer); err != nil {
++		t.Fatal(err)
++	}
++	if w.health[0].consecutiveFailures.Load() != 0 || w.health[0].consecutiveSuccesses.Load() != 1 {
++		t.Fatal("UDP response must credit health exactly once across read APIs")
++	}
++}
