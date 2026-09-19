@@ -12,8 +12,8 @@ vload lets you combine two physical networks (WiFi + SIM1, WiFi + SIM2, or SIM1 
 
 * Assign a server profile to each network (the same profile can be used for both).
 * Set a relative speed weight per network (e.g. 70/30).
-* New connections through the VPN are distributed across both networks according to that weight, so multi-connection downloaders (e.g. IDM) see combined throughput from both links.
-* If one network drops mid-session, traffic automatically reroutes to the surviving network.
+* Load balancing uses recent response latency and pending connection attempts to choose a responsive network. Multiple connections can use both links.
+* If one network drops, new connection attempts use the surviving network. Applications may need to reconnect existing streams.
 
 This is connection-level load balancing (not single-stream link bonding), which matches how parallel-connection downloaders already work.
 

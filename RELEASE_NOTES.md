@@ -1,12 +1,15 @@
-## v1.4.37 local candidate ? preserve backup connection attempts
+## v1.4.37 ? browsing and network recovery fixes
 
-- Correct an inverted load-balancer policy: eight consecutive lost connection races previously disabled the backup attempt for 30 seconds while continuing to select the slow primary. The phone log records this policy immediately before a YouTube connection stalled for 10.24 seconds.
-- Repeatedly slow members are now temporarily less preferred when another healthy member is available. A slow dial always retains its 250 ms backup attempt in load-balance mode, even when all members have slow history. Strict-priority groups retain their configured behavior.
-- Preserve FakeDNS, disabled real-DNS answer caching, Resolve Destination off, mux and QUIC. No server settings changed.
+- Improve load-balance selection using recent first-response latency and pending connection attempts. Idle browser connections no longer push new requests onto a slower network.
+- Correct backup-dial behavior after repeated slow attempts: temporarily prefer a responsive alternative while retaining the 250 ms backup attempt. Previously, eight lost races disabled the backup for 30 seconds and could leave browsing stalled on LTE.
+- Cancel obsolete network attempts during disconnects and replacements, and prevent late callbacks from changing the replacement network's health measurements.
+- Recover mux sessions after a remote DNS-router shutdown and allow usable sessions to serve requests while the connection pool grows.
+- Disable real-DNS answer caching while preserving FakeDNS address mappings. Resolve Destination, configured mux, and QUIC remain supported.
+- Fix build-version metadata refresh so APK and bundle versions follow the release configuration.
 
-Two regression tests reproduced the old timeout with a healthy backup and now pass. The full race-enabled native suite passes. Separate established-connection mux write timeouts under load are not proven resolved; no timeout values were changed and no established application data is replayed.
+Validation: race-enabled native regression tests and four-ABI Android builds pass. The tested phone candidate completed 12/12 Google searches (median first response 341 ms); Google and YouTube TCP/HTTP3 checks also succeeded. These are short transport checks, not browser-rendering or video-endurance guarantees. Intermittent established-mux stalls remain under investigation: a concurrent Instagram request timed out once, then succeeded on an isolated retry. This release does not promise zero latency or uninterrupted service under weak-network conditions.
 
-Phone validation: installed version 1.4.37 (code 270). All 12 Google searches completed (median first response 341 ms, maximum 1.500 s). Google and YouTube TCP/HTTP3 checks returned 200. A concurrent four-request check was stopped after Instagram timed out at 8 seconds on an already-open LTE mux stream; the other three requests succeeded, and an isolated Instagram retry returned 200 in 451 ms. Five additional inbound TUN handshake resets occurred in 0?3 ms. The setup-failover fix is verified by regression tests, but established-stream stalls remain unresolved and no stable public release is claimed.
+## Earlier local validation records
 
 ## v1.4.36 local candidate ? response-aware network selection
 
