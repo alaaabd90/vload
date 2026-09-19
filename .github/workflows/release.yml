@@ -32,6 +32,7 @@ jobs:
             github.com/matsuridayo/libneko/protect_server \
             github.com/sagernet/sing/common/bufio \
             github.com/sagernet/sing-mux \
+            github.com/sagernet/sing-vmess/vless \
             github.com/sagernet/sing-box/protocol/group \
             github.com/sagernet/sing-box/route -count=1 -timeout=120s
           go test -race github.com/sagernet/sing-box/common/tlsfragment \

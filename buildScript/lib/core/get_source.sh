@@ -55,4 +55,14 @@ popd
 
 ####
 
+if [ ! -d "sing-vmess" ]; then
+  git clone --no-checkout https://github.com/sagernet/sing-vmess.git sing-vmess
+fi
+pushd sing-vmess
+git checkout "$COMMIT_SING_VMESS"
+apply_local_patch "$PATCH_ROOT/sing-vmess-vision-close.patch"
+popd
+
+####
+
 popd
