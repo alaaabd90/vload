@@ -1,5 +1,5 @@
 diff --git a/client.go b/client.go
-index 85114aa..17c5896 100644
+index 85114aa..d4d85f6 100644
 --- a/client.go
 +++ b/client.go
 @@ -3,6 +3,7 @@ package mux
@@ -10,12 +10,13 @@ index 85114aa..17c5896 100644
  	"sync"
  
  	"github.com/hashicorp/yamux"
-@@ -25,9 +26,18 @@ type Client struct {
+@@ -25,9 +26,19 @@ type Client struct {
  	padding        bool
  	access         sync.Mutex
  	connections    list.List[abstractSession]
 +	pending        *pendingSession
  	brutal         BrutalOptions
++	trafficPools   [2]*Client
  }
  
 +type pendingSession struct {
@@ -29,12 +30,63 @@ index 85114aa..17c5896 100644
  type Options struct {
  	Dialer         N.Dialer
  	Logger         logger.Logger
-@@ -77,37 +87,37 @@ func NewClient(options Options) (*Client, error) {
+@@ -46,6 +57,50 @@ type BrutalOptions struct {
+ }
+ 
+ func NewClient(options Options) (*Client, error) {
++	client, err := newSingleClient(options)
++	if err != nil {
++		return nil, err
++	}
++	// Reserve a bounded part of the existing budget for web and DNS ports.
++	// Do not multiply a one-connection limit or Brutal's configured rate.
++	if options.MaxConnections >= 2 && !options.Brutal.Enabled {
++		webBudget := options.MaxConnections / 4
++		if webBudget < 1 {
++			webBudget = 1
++		}
++		if webBudget > 4 {
++			webBudget = 4
++		}
++		webOptions, peerOptions := options, options
++		webOptions.MaxConnections = webBudget
++		peerOptions.MaxConnections = options.MaxConnections - webBudget
++		client.trafficPools[0], _ = newSingleClient(webOptions)
++		client.trafficPools[1], _ = newSingleClient(peerOptions)
++	}
++	return client, nil
++}
++
++// WebDNSDestination classifies ports, not applications or content. Encrypted
++// bulk downloads on web ports still share the web pool; this is not link QoS.
++func WebDNSDestination(destination M.Socksaddr) bool {
++	switch destination.Port {
++	case 53, 80, 443, 853:
++		return true
++	default:
++		return false
++	}
++}
++func (c *Client) trafficClient(destination M.Socksaddr) *Client {
++	if c.trafficPools[0] == nil {
++		return c
++	}
++	if WebDNSDestination(destination) {
++		return c.trafficPools[0]
++	}
++	return c.trafficPools[1]
++}
++
++func newSingleClient(options Options) (*Client, error) {
+ 	client := &Client{
+ 		dialer:         options.Dialer,
+ 		logger:         options.Logger,
+@@ -77,37 +132,37 @@ func NewClient(options Options) (*Client, error) {
  func (c *Client) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
  	switch N.NetworkName(network) {
  	case N.NetworkTCP:
 -		stream, err := c.openStream(ctx)
-+		stream, remoteError, err := c.openStream(ctx)
++		stream, remoteError, err := c.trafficClient(destination).openStream(ctx)
  		if err != nil {
  			return nil, err
  		}
@@ -46,7 +98,7 @@ index 85114aa..17c5896 100644
  		return conn, nil
  	case N.NetworkUDP:
 -		stream, err := c.openStream(ctx)
-+		stream, remoteError, err := c.openStream(ctx)
++		stream, remoteError, err := c.trafficClient(destination).openStream(ctx)
  		if err != nil {
  			return nil, err
  		}
@@ -60,7 +112,7 @@ index 85114aa..17c5896 100644
  
  func (c *Client) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 -	stream, err := c.openStream(ctx)
-+	stream, remoteError, err := c.openStream(ctx)
++	stream, remoteError, err := c.trafficClient(destination).openStream(ctx)
  	if err != nil {
  		return nil, err
  	}
@@ -74,7 +126,7 @@ index 85114aa..17c5896 100644
  	var (
  		session abstractSession
  		stream  net.Conn
-@@ -125,20 +135,95 @@ func (c *Client) openStream(ctx context.Context) (net.Conn, error) {
+@@ -125,20 +180,95 @@ func (c *Client) openStream(ctx context.Context) (net.Conn, error) {
  		break
  	}
  	if err != nil {
@@ -175,7 +227,7 @@ index 85114aa..17c5896 100644
  
  	var sessions []abstractSession
  	for element := c.connections.Front(); element != nil; {
-@@ -154,28 +239,33 @@ func (c *Client) offer(ctx context.Context) (abstractSession, error) {
+@@ -154,28 +284,33 @@ func (c *Client) offer(ctx context.Context) (abstractSession, error) {
  	}
  	if c.brutal.Enabled {
  		if len(sessions) > 0 {
@@ -216,7 +268,7 @@ index 85114aa..17c5896 100644
  }
  
  func (c *Client) offerNew(ctx context.Context) (abstractSession, error) {
-@@ -232,7 +322,6 @@ func (c *Client) offerNew(ctx context.Context) (abstractSession, error) {
+@@ -232,7 +367,6 @@ func (c *Client) offerNew(ctx context.Context) (abstractSession, error) {
  			return nil, E.Cause(err, "brutal exchange")
  		}
  	}
@@ -224,9 +276,15 @@ index 85114aa..17c5896 100644
  	return session, nil
  }
  
-@@ -264,11 +353,18 @@ func (c *Client) brutalExchange(ctx context.Context, sessionConn net.Conn, sessi
+@@ -263,12 +397,24 @@ func (c *Client) brutalExchange(ctx context.Context, sessionConn net.Conn, sessi
+ }
  
  func (c *Client) Reset() {
++	for _, pool := range c.trafficPools {
++		if pool != nil {
++			pool.Reset()
++		}
++	}
  	c.access.Lock()
 -	defer c.access.Unlock()
 -	for _, session := range c.connections.Array() {
@@ -615,6 +673,301 @@ index 0000000..da10f34
 +				}
 +			})
 +		}
++	}
++}
+diff --git a/client_traffic_test.go b/client_traffic_test.go
+new file mode 100644
+index 0000000..27d6be5
+--- /dev/null
++++ b/client_traffic_test.go
+@@ -0,0 +1,289 @@
++package mux
++
++import (
++	"context"
++	"errors"
++	"io"
++	"net"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing/common/bufio"
++	M "github.com/sagernet/sing/common/metadata"
++)
++
++type trafficGateConn struct {
++	net.Conn
++	blocked atomic.Bool
++	gate    chan struct{}
++	once    sync.Once
++}
++
++func (c *trafficGateConn) Write(p []byte) (int, error) {
++	if c.blocked.Load() {
++		<-c.gate
++	}
++	return c.Conn.Write(p)
++}
++func (c *trafficGateConn) unblock()     { c.once.Do(func() { close(c.gate) }) }
++func (c *trafficGateConn) Close() error { c.unblock(); return c.Conn.Close() }
++
++type trafficDialer struct {
++	address string
++	mu      sync.Mutex
++	conns   []*trafficGateConn
++}
++
++func (d *trafficDialer) DialContext(ctx context.Context, _ string, _ M.Socksaddr) (net.Conn, error) {
++	c, err := (&net.Dialer{}).DialContext(ctx, "tcp", d.address)
++	if err != nil {
++		return nil, err
++	}
++	wrapped := &trafficGateConn{Conn: c, gate: make(chan struct{})}
++	d.mu.Lock()
++	d.conns = append(d.conns, wrapped)
++	d.mu.Unlock()
++	return wrapped, nil
++}
++func (*trafficDialer) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
++	return nil, errors.New("unused")
++}
++func TestWebRequestIsolatedFromBlockedPeerTransport(t *testing.T) {
++	for _, protocol := range []string{"yamux", "smux", "h2mux"} {
++		t.Run(protocol, func(t *testing.T) {
++			listener, err := net.Listen("tcp", "127.0.0.1:0")
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer listener.Close()
++			go func() {
++				for {
++					conn, err := listener.Accept()
++					if err != nil {
++						return
++					}
++					go func() {
++						defer conn.Close()
++						req, err := ReadRequest(conn)
++						if err != nil {
++							return
++						}
++						session, err := newServerSession(conn, req.Protocol)
++						if err != nil {
++							return
++						}
++						defer session.Close()
++						for {
++							stream, err := session.Accept()
++							if err != nil {
++								return
++							}
++							go func() {
++								defer stream.Close()
++								stream.SetDeadline(time.Now().Add(5 * time.Second))
++								if _, err := ReadStreamRequest(stream); err != nil {
++									return
++								}
++								response := &serverConn{ExtendedConn: bufio.NewExtendedConn(stream)}
++								io.Copy(response, stream)
++							}()
++						}
++					}()
++				}
++			}()
++			dialer := &trafficDialer{address: listener.Addr().String()}
++			client, err := NewClient(Options{Dialer: dialer, Protocol: protocol, MaxConnections: 4, MinStreams: 100})
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer client.Close()
++			peer, err := client.DialContext(context.Background(), "tcp", M.ParseSocksaddr("peer.example:6881"))
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer peer.Close()
++			peer.SetDeadline(time.Now().Add(5 * time.Second))
++			if _, err = peer.Write([]byte("P")); err != nil {
++				t.Fatal(err)
++			}
++			if _, err = io.ReadFull(peer, make([]byte, 1)); err != nil {
++				t.Fatal(err)
++			}
++			dialer.mu.Lock()
++			bulk := dialer.conns[0]
++			dialer.mu.Unlock()
++			defer bulk.unblock()
++			bulk.blocked.Store(true)
++			done := make(chan error, 1)
++			go func() {
++				web, err := client.DialContext(context.Background(), "tcp", M.ParseSocksaddr("web.example:443"))
++				if err != nil {
++					done <- err
++					return
++				}
++				defer web.Close()
++				web.SetDeadline(time.Now().Add(time.Second))
++				if _, err = web.Write([]byte("W")); err == nil {
++					_, err = io.ReadFull(web, make([]byte, 1))
++				}
++				done <- err
++			}()
++			select {
++			case err = <-done:
++				if err != nil {
++					t.Fatal("web request blocked by peer transport:", err)
++				}
++			case <-time.After(time.Second):
++				bulk.unblock()
++				<-done
++				t.Fatal("web request shared the blocked peer transport")
++			}
++			dialer.mu.Lock()
++			count := len(dialer.conns)
++			dialer.mu.Unlock()
++			if count > 4 {
++				t.Fatal("exceeded configured transport budget")
++			}
++		})
++	}
++}
++
++func TestTrafficPoolsRespectBudgetAndReset(t *testing.T) {
++	for _, budget := range []int{2, 4, 24} {
++		c, err := NewClient(Options{Protocol: "yamux", MaxConnections: budget, MaxStreams: 64})
++		if err != nil {
++			t.Fatal(err)
++		}
++		web := c.trafficClient(M.ParseSocksaddr("example.com:443"))
++		peer := c.trafficClient(M.ParseSocksaddr("example.com:6881"))
++		if web == peer || web.maxConnections+peer.maxConnections != budget {
++			t.Fatal("pool split violated transport budget")
++		}
++		if web.maxStreams != 64 || peer.maxStreams != 64 {
++			t.Fatal("stream limits changed")
++		}
++		for _, port := range []string{"53", "80", "853"} {
++			if c.trafficClient(M.ParseSocksaddr("example.com:"+port)) != web {
++				t.Fatal("DNS/web classification mismatch")
++			}
++		}
++		a, b := &availablePoolSession{}, &availablePoolSession{}
++		web.connections.PushBack(a)
++		peer.connections.PushBack(b)
++		c.Reset()
++		if !a.closed.Load() || !b.closed.Load() {
++			t.Fatal("network reset missed a traffic pool")
++		}
++	}
++	for _, opts := range []Options{{MaxConnections: 1}, {MaxStreams: 8}, {MaxConnections: 4, Brutal: BrutalOptions{Enabled: true}}} {
++		c, err := NewClient(opts)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if c.trafficPools[0] != nil {
++			t.Fatal("split changed single-connection, stream-only, or Brutal semantics")
++		}
++	}
++}
++
++func TestConcurrentPeerTransfersAndWebRequests(t *testing.T) {
++	for _, protocol := range []string{"yamux", "smux", "h2mux"} {
++		t.Run(protocol, func(t *testing.T) {
++			listener, err := net.Listen("tcp", "127.0.0.1:0")
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer listener.Close()
++			go func() {
++				for {
++					conn, err := listener.Accept()
++					if err != nil {
++						return
++					}
++					go func() {
++						defer conn.Close()
++						req, err := ReadRequest(conn)
++						if err != nil {
++							return
++						}
++						session, err := newServerSession(conn, req.Protocol)
++						if err != nil {
++							return
++						}
++						defer session.Close()
++						for {
++							stream, err := session.Accept()
++							if err != nil {
++								return
++							}
++							go func() {
++								defer stream.Close()
++								stream.SetDeadline(time.Now().Add(20 * time.Second))
++								if _, err := ReadStreamRequest(stream); err != nil {
++									return
++								}
++								io.Copy(&serverConn{ExtendedConn: bufio.NewExtendedConn(stream)}, stream)
++							}()
++						}
++					}()
++				}
++			}()
++			dialer := &trafficDialer{address: listener.Addr().String()}
++			client, err := NewClient(Options{Dialer: dialer, Protocol: protocol, MaxConnections: 24, MinStreams: 4})
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer client.Close()
++			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
++			defer cancel()
++			results := make(chan error, 257)
++			start := make(chan struct{})
++			transfer := func(port string, size, rounds int) error {
++				conn, err := client.DialContext(ctx, "tcp", M.ParseSocksaddr("example.com:"+port))
++				if err != nil {
++					return err
++				}
++				defer conn.Close()
++				conn.SetDeadline(time.Now().Add(20 * time.Second))
++				payload := make([]byte, size)
++				echo := make([]byte, size)
++				for i := 0; i < rounds; i++ {
++					if _, err = conn.Write(payload); err != nil {
++						return err
++					}
++					if _, err = io.ReadFull(conn, echo); err != nil {
++						return err
++					}
++				}
++				return nil
++			}
++			for i := 0; i < 256; i++ {
++				go func() { <-start; results <- transfer("6881", 32768, 4) }()
++			}
++			go func() {
++				<-start
++				for i := 0; i < 32; i++ {
++					if err := transfer("443", 32, 1); err != nil {
++						results <- err
++						return
++					}
++				}
++				results <- nil
++			}()
++			close(start)
++			for i := 0; i < 257; i++ {
++				if err := <-results; err != nil {
++					t.Fatal(err)
++				}
++			}
++			dialer.mu.Lock()
++			count := len(dialer.conns)
++			dialer.mu.Unlock()
++			if count > 24 {
++				t.Fatalf("traffic split exceeded physical connection budget: %d", count)
++			}
++		})
 +	}
 +}
 diff --git a/h2mux_conn.go b/h2mux_conn.go

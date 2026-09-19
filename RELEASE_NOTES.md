@@ -1,3 +1,16 @@
+## v1.4.38 local candidate ? separate web traffic from peer load
+
+- Give web/DNS ports (53, 80, 443, 853) separate mux transports from other ports when a connection-count limit of at least two is configured. Reserve one quarter of the configured limit, up to four connections, for this pool; retain the same total maximum. With the tested 24-connection configuration this is four web/DNS and twenty other transports. Single-connection, stream-limit-only and Brutal configurations retain their original pool behavior.
+- Track web/DNS response latency, pending attempts and slow-dial history separately from peer traffic. Peer connection counts no longer determine the initial web path, and busy peer attempts no longer displace a responsive web path.
+- Smooth response measurements in both directions so one destination's DNS/server delay does not immediately replace the network's latency history. Sustained slow responses still change path preference. Physical-network availability, circuit-breaker recovery and strict-priority groups remain in place.
+- Preserve FakeDNS, disabled real-DNS caching, Resolve Destination off, TFO, mux protocols and QUIC. No server settings changed.
+
+Controlled tests reproduced shared-transport blocking and peer-pressure interference before the fixes. The corrected tests pass for yamux, smux and h2mux. A stress test completed 256 peer transfers concurrently with 32 web requests, within the 24-transport budget, for each protocol. The full race-enabled native suite and four-ABI Android builds pass.
+
+The first candidate had an eight-second Google body-download timeout and a Google TCP EOF; it was removed for comparison. After correcting the latency-outlier behavior, the revised candidate completed 12/12 Google searches (median 308 ms, maximum 1.351 s), plus successful Google/YouTube TCP and HTTP/3 checks. A four-site concurrent check completed with first responses of 180?412 ms while the phone log showed substantial peer activity. A second 12-request sample with peer activity also completed 12/12 (median 340 ms, maximum 585 ms). Short samples vary with network conditions and are not proof of universal improvement. Background NXDOMAIN and inbound client-reset errors remain; real provider DNS rejections are not fixed by pool isolation.
+
+This is a local candidate, not a public release. Port-based separation cannot distinguish bulk HTTPS transfers from browser traffic on the same ports, and reserving transport capacity can trade peak parallel throughput for isolation. It cannot guarantee unlimited traffic, zero latency or freedom from network/server congestion.
+
 ## v1.4.37 ? browsing and network recovery fixes
 
 - Improve load-balance selection using recent first-response latency and pending connection attempts. Idle browser connections no longer push new requests onto a slower network.
