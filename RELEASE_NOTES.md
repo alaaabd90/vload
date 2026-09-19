@@ -1,12 +1,12 @@
-## v1.4.39 local candidate - idle preconnection accounting
+## v1.4.39 - idle preconnection accounting
 
 - Do not treat successfully opened connections that have not sent a request as pending responses. Accumulated idle preconnections could previously displace browsing from a responsive network onto a slower one.
 - Continue counting connection attempts and real first-response waits. Synchronize ready, write, response and close transitions so cancellation and concurrent callbacks cannot leak or double-release pending counts.
 - Preserve FakeDNS, disabled DNS caching, Resolve Destination off, mux, QUIC and server settings.
 
-Validation: the idle-preconnection regression failed before the fix and passes after. Full race-enabled native suites and four-ABI Android builds passed; signatures and packaged native libraries were verified. The local phone candidate completed 12/12 Google requests (311 ms median first response, 345 ms maximum) and a four-site concurrent request check. Connection reuse checks cover HTTP/2 and HTTP/3 across idle intervals.
+Validation: the idle-preconnection regression failed before the fix and passes after. Full race-enabled native suites and four-ABI Android builds passed; signatures and packaged native libraries were verified. The local phone candidate completed 12/12 Google requests (311 ms median first response, 345 ms maximum) and a four-site concurrent request check. All 12 Google/YouTube HTTP/2 and HTTP/3 checks passed, including eight successful connection reuses after 35-second idle intervals.
 
-The saved 1.4.38 logs do not prove this defect caused every reported slowdown. The candidate has not completed a one-hour browser/video endurance test and is not published on GitHub.
+The saved 1.4.38 logs do not prove this defect caused every reported slowdown. A one-hour browser/video endurance test has not been completed; these results do not establish that every long-session slowdown is resolved.
 
 ## v1.4.38 - browsing responsiveness under peer load
 
