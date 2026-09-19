@@ -100,7 +100,9 @@ class VpnWatchdog(
     }
 
     private fun handleOf(network: Network): Long =
-        runCatching { network.networkHandle }.getOrDefault(UNBOUND)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            runCatching { network.networkHandle }.getOrDefault(UNBOUND)
+        } else UNBOUND
 
     private fun adoptionMessage(previous: Long, adopted: Long): String = when (previous) {
         UNBOUND -> "vpn adopted: pinning the datapath to handle $adopted"

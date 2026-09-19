@@ -4,7 +4,9 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkRequest
 import android.os.Binder
+import android.os.Build
 import android.os.ParcelFileDescriptor
+import androidx.annotation.RequiresApi
 import libcore.Libcore
 import libcore.LocalTetherSession
 
@@ -29,6 +31,9 @@ class SessionResources(
         dnsServers: List<java.net.InetAddress>,
         availabilityTimeoutMs: Int,
     ): String {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            error("Local tethering requires Android 11 or later")
+        }
         val created = testNetworkApi.createTunInterface(addresses)
         tun = created
         fileDescriptor = created.fileDescriptor
@@ -41,6 +46,7 @@ class SessionResources(
         return name
     }
 
+    @RequiresApi(Build.VERSION_CODES.R)
     private fun requestKeepAlive() {
         val request = NetworkRequest.Builder()
             .clearCapabilities()

@@ -7,6 +7,7 @@ import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import androidx.core.content.ContextCompat
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -63,7 +64,8 @@ import org.json.JSONObject
  */
 object DevOptionsSettings {
 
-    fun hasPermission(): Boolean = SagerNet.application.checkSelfPermission(
+    fun hasPermission(): Boolean = ContextCompat.checkSelfPermission(
+        SagerNet.application,
         Manifest.permission.WRITE_SECURE_SETTINGS,
     ) == PackageManager.PERMISSION_GRANTED
 

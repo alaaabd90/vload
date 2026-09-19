@@ -226,6 +226,9 @@ class TestNetworkApi(private val context: Context) {
     }.getOrNull()
 
     fun setupTestNetwork(interfaceName: String, dnsServers: List<InetAddress>, binder: IBinder) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
+            error("Test networks require Android 10 or later")
+        }
         val instance = manager ?: error("setupTestNetwork: test_network service unavailable")
         val owner = managerClass ?: error("setupTestNetwork: TestNetworkManager class absent")
 

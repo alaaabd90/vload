@@ -178,6 +178,9 @@ class ProbeRunner(private val context: Context) {
     }
 
     private fun awaitCallbackDelivery(interfaceName: String): Pair<Boolean, String> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return false to "Test-network callback probe requires Android 11 or later"
+        }
         val manager = context.connectivityManager()
         val latch = java.util.concurrent.CountDownLatch(1)
         val seen = java.util.Collections.synchronizedList(mutableListOf<String>())
@@ -196,8 +199,11 @@ class ProbeRunner(private val context: Context) {
 
         return runCatching {
             manager.registerNetworkCallback(request, callback)
-            val delivered = latch.await(CALLBACK_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
-            runCatching { manager.unregisterNetworkCallback(callback) }
+            val delivered = try {
+                latch.await(CALLBACK_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+            } finally {
+                runCatching { manager.unregisterNetworkCallback(callback) }
+            }
 
             delivered to when {
                 delivered -> "onAvailable delivered $interfaceName; all seen=$seen"
@@ -205,6 +211,7 @@ class ProbeRunner(private val context: Context) {
                     "all seen=$seen"
             }
         }.getOrElse { failure ->
+            if (failure is InterruptedException) Thread.currentThread().interrupt()
             false to "registerNetworkCallback rejected: " +
                 "${failure.javaClass.simpleName}: ${failure.message}"
         }

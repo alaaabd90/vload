@@ -1,0 +1,80 @@
+diff --git a/common/bufio/bind.go b/common/bufio/bind.go
+index dd46fb8..952613a 100644
+--- a/common/bufio/bind.go
++++ b/common/bufio/bind.go
+@@ -2,6 +2,7 @@ package bufio
+ 
+ import (
+ 	"net"
++	"sync"
+ 
+ 	"github.com/sagernet/sing/common/buf"
+ 	M "github.com/sagernet/sing/common/metadata"
+@@ -137,15 +138,29 @@ func NewServerPacketConn(conn net.PacketConn) N.ExtendedConn {
+ 
+ type serverPacketConn struct {
+ 	N.NetPacketConn
++	peerMu     sync.RWMutex
+ 	remoteAddr M.Socksaddr
+ }
+ 
++func (c *serverPacketConn) setRemoteAddr(addr M.Socksaddr) {
++	c.peerMu.Lock()
++	c.remoteAddr = addr
++	c.peerMu.Unlock()
++}
++
++func (c *serverPacketConn) remoteAddress() M.Socksaddr {
++	c.peerMu.RLock()
++	addr := c.remoteAddr
++	c.peerMu.RUnlock()
++	return addr
++}
++
+ func (c *serverPacketConn) Read(p []byte) (n int, err error) {
+ 	n, addr, err := c.NetPacketConn.ReadFrom(p)
+ 	if err != nil {
+ 		return
+ 	}
+-	c.remoteAddr = M.SocksaddrFromNet(addr)
++	c.setRemoteAddr(M.SocksaddrFromNet(addr))
+ 	return
+ }
+ 
+@@ -154,20 +169,20 @@ func (c *serverPacketConn) ReadBuffer(buffer *buf.Buffer) error {
+ 	if err != nil {
+ 		return err
+ 	}
+-	c.remoteAddr = destination
++	c.setRemoteAddr(destination)
+ 	return nil
+ }
+ 
+ func (c *serverPacketConn) Write(p []byte) (n int, err error) {
+-	return c.NetPacketConn.WriteTo(p, c.remoteAddr.UDPAddr())
++	return c.NetPacketConn.WriteTo(p, c.remoteAddress().UDPAddr())
+ }
+ 
+ func (c *serverPacketConn) WriteBuffer(buffer *buf.Buffer) error {
+-	return c.NetPacketConn.WritePacket(buffer, c.remoteAddr)
++	return c.NetPacketConn.WritePacket(buffer, c.remoteAddress())
+ }
+ 
+ func (c *serverPacketConn) RemoteAddr() net.Addr {
+-	return c.remoteAddr
++	return c.remoteAddress()
+ }
+ 
+ func (c *serverPacketConn) Upstream() any {
+diff --git a/common/bufio/bind_wait.go b/common/bufio/bind_wait.go
+index 779474c..9e874e7 100644
+--- a/common/bufio/bind_wait.go
++++ b/common/bufio/bind_wait.go
+@@ -57,6 +57,6 @@ func (w *serverPacketReadWaiter) WaitReadBuffer() (buffer *buf.Buffer, err error
+ 	if err != nil {
+ 		return
+ 	}
+-	w.remoteAddr = destination
++	w.setRemoteAddr(destination)
+ 	return
+ }

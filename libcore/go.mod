@@ -113,3 +113,5 @@ replace github.com/matsuridayo/libneko => ../../libneko
 replace github.com/sagernet/sing-box => ../../sing-box
 
 replace github.com/sagernet/sing-mux => ../../sing-mux
+
+replace github.com/sagernet/sing => ../../sing-runtime

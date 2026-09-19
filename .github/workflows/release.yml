@@ -14,9 +14,32 @@ on:
 permissions:
   contents: write
 jobs:
+  verify-core:
+    name: Core regression tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+          cache-dependency-path: libcore/go.sum
+      - name: Fetch pinned native sources and apply tested patches
+        run: bash buildScript/lib/core/get_source.sh
+      - name: FakeDNS, HTTP3, packet loss, mux and failover tests
+        working-directory: libcore
+        run: |
+          go test -race -tags with_conntrack,with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api . \
+            github.com/matsuridayo/libneko/protect_server \
+            github.com/sagernet/sing/common/bufio \
+            github.com/sagernet/sing-mux \
+            github.com/sagernet/sing-box/protocol/group \
+            github.com/sagernet/sing-box/route -count=1 -timeout=120s
+          go test -race github.com/sagernet/sing-box/common/tlsfragment \
+            -run TestFragmentDoesNotEnableNagle -count=1 -timeout=30s
   libcore:
     name: Native Build (LibCore)
     runs-on: ubuntu-latest
+    needs: [verify-core]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -1,0 +1,275 @@
+diff --git a/client.go b/client.go
+index 85114aa..8b5ff8f 100644
+--- a/client.go
++++ b/client.go
+@@ -25,9 +25,18 @@ type Client struct {
+ 	padding        bool
+ 	access         sync.Mutex
+ 	connections    list.List[abstractSession]
++	pending        *pendingSession
+ 	brutal         BrutalOptions
+ }
+ 
++type pendingSession struct {
++	done   chan struct{}
++	cancel context.CancelFunc
++	once   sync.Once
++}
++
++func (p *pendingSession) finish() { p.once.Do(func() { close(p.done) }) }
++
+ type Options struct {
+ 	Dialer         N.Dialer
+ 	Logger         logger.Logger
+@@ -137,8 +146,61 @@ func (c *Client) openStream(ctx context.Context) (net.Conn, error) {
+ }
+ 
+ func (c *Client) offer(ctx context.Context) (abstractSession, error) {
+-	c.access.Lock()
+-	defer c.access.Unlock()
++	for {
++		if err := ctx.Err(); err != nil {
++			return nil, err
++		}
++		c.access.Lock()
++		session, needNew := c.availableSession()
++		if !needNew {
++			c.access.Unlock()
++			return session, nil
++		}
++		if pending := c.pending; pending != nil {
++			c.access.Unlock()
++			// An existing usable session can serve requests while another
++			// physical connection is being established.
++			if session != nil {
++				return session, nil
++			}
++			select {
++			case <-ctx.Done():
++				return nil, ctx.Err()
++			case <-pending.done:
++				continue
++			}
++		}
++		dialCtx, cancel := context.WithCancel(ctx)
++		pending := &pendingSession{done: make(chan struct{}), cancel: cancel}
++		c.pending = pending
++		c.access.Unlock()
++
++		// Never hold the pool mutex across DNS, TLS or protocol handshakes.
++		session, err := c.offerNew(dialCtx)
++		cancel()
++		c.access.Lock()
++		stale := c.pending != pending
++		if !stale {
++			c.pending = nil
++			if err == nil {
++				c.connections.PushBack(session)
++			}
++		}
++		c.access.Unlock()
++		pending.finish()
++		if stale {
++			if session != nil {
++				session.Close()
++			}
++			return nil, context.Canceled
++		}
++		return session, err
++	}
++}
++
++// availableSession is called with access held. The second result requests
++// growth of the pool; the first may still be usable while growth is pending.
++func (c *Client) availableSession() (abstractSession, bool) {
+ 
+ 	var sessions []abstractSession
+ 	for element := c.connections.Front(); element != nil; {
+@@ -154,28 +216,33 @@ func (c *Client) offer(ctx context.Context) (abstractSession, error) {
+ 	}
+ 	if c.brutal.Enabled {
+ 		if len(sessions) > 0 {
+-			return sessions[0], nil
++			return sessions[0], false
+ 		}
+-		return c.offerNew(ctx)
++		return nil, true
+ 	}
+ 	session := common.MinBy(common.Filter(sessions, abstractSession.CanTakeNewRequest), abstractSession.NumStreams)
+ 	if session == nil {
+-		return c.offerNew(ctx)
++		return nil, true
+ 	}
+ 	numStreams := session.NumStreams()
+ 	if numStreams == 0 {
+-		return session, nil
++		return session, false
+ 	}
+ 	if c.maxConnections > 0 {
+ 		if len(sessions) >= c.maxConnections || numStreams < c.minStreams {
+-			return session, nil
++			return session, false
+ 		}
+ 	} else {
+ 		if c.maxStreams > 0 && numStreams < c.maxStreams {
+-			return session, nil
++			return session, false
+ 		}
+ 	}
+-	return c.offerNew(ctx)
++	// A configured stream limit is a hard cap. minStreams only controls
++	// when to grow the pool and must not block reuse during a slow dial.
++	if c.maxStreams > 0 && numStreams >= c.maxStreams {
++		return nil, true
++	}
++	return session, true
+ }
+ 
+ func (c *Client) offerNew(ctx context.Context) (abstractSession, error) {
+@@ -232,7 +299,6 @@ func (c *Client) offerNew(ctx context.Context) (abstractSession, error) {
+ 			return nil, E.Cause(err, "brutal exchange")
+ 		}
+ 	}
+-	c.connections.PushBack(session)
+ 	return session, nil
+ }
+ 
+@@ -264,11 +330,18 @@ func (c *Client) brutalExchange(ctx context.Context, sessionConn net.Conn, sessi
+ 
+ func (c *Client) Reset() {
+ 	c.access.Lock()
+-	defer c.access.Unlock()
+-	for _, session := range c.connections.Array() {
++	sessions := c.connections.Array()
++	c.connections.Init()
++	pending := c.pending
++	c.pending = nil
++	c.access.Unlock()
++	if pending != nil {
++		pending.cancel()
++		pending.finish()
++	}
++	for _, session := range sessions {
+ 		session.Close()
+ 	}
+-	c.connections.Init()
+ }
+ 
+ func (c *Client) Close() error {
+diff --git a/client_pool_test.go b/client_pool_test.go
+new file mode 100644
+index 0000000..630cea8
+--- /dev/null
++++ b/client_pool_test.go
+@@ -0,0 +1,111 @@
++package mux
++
++import (
++	"context"
++	"errors"
++	M "github.com/sagernet/sing/common/metadata"
++	"net"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++type stalledPoolDialer struct {
++	started chan struct{}
++	once    sync.Once
++}
++
++type availablePoolSession struct{ closed atomic.Bool }
++
++func (*availablePoolSession) Open() (net.Conn, error)   { return nil, errors.New("unused") }
++func (*availablePoolSession) Accept() (net.Conn, error) { return nil, errors.New("unused") }
++func (*availablePoolSession) NumStreams() int           { return 4 }
++func (s *availablePoolSession) Close() error            { s.closed.Store(true); return nil }
++func (s *availablePoolSession) IsClosed() bool          { return s.closed.Load() }
++func (*availablePoolSession) CanTakeNewRequest() bool   { return true }
++
++func TestPoolHealthySessionAvailableDuringSlowGrowth(t *testing.T) {
++	d := &stalledPoolDialer{started: make(chan struct{})}
++	c, _ := NewClient(Options{Dialer: d, Protocol: "yamux", MaxConnections: 2, MinStreams: 4})
++	existing := &availablePoolSession{}
++	c.connections.PushBack(existing)
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	done := make(chan struct{})
++	go func() { c.offer(ctx); close(done) }()
++	<-d.started
++	waiting, stop := context.WithTimeout(context.Background(), 100*time.Millisecond)
++	defer stop()
++	got, err := c.offer(waiting)
++	cancel()
++	<-done
++	if err != nil || got != existing {
++		t.Fatalf("healthy session blocked behind pool growth: %v", err)
++	}
++	c.Reset()
++	if !existing.closed.Load() {
++		t.Fatal("reset did not close existing session")
++	}
++}
++
++func (d *stalledPoolDialer) DialContext(ctx context.Context, _ string, _ M.Socksaddr) (net.Conn, error) {
++	d.once.Do(func() { close(d.started) })
++	<-ctx.Done()
++	return nil, ctx.Err()
++}
++func (*stalledPoolDialer) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
++	return nil, errors.New("unused")
++}
++
++func TestPoolResetCancelsPendingDial(t *testing.T) {
++	d := &stalledPoolDialer{started: make(chan struct{})}
++	c, _ := NewClient(Options{Dialer: d, Protocol: "yamux"})
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	done := make(chan struct{})
++	go func() { c.offer(ctx); close(done) }()
++	<-d.started
++	reset := make(chan struct{})
++	go func() { c.Reset(); close(reset) }()
++	select {
++	case <-reset:
++	case <-time.After(250 * time.Millisecond):
++		cancel()
++		<-done
++		<-reset
++		t.Fatal("network reset blocked behind pending mux dial")
++	}
++	select {
++	case <-done:
++	case <-time.After(time.Second):
++		t.Fatal("reset did not cancel pending mux dial")
++	}
++}
++
++func TestPoolWaitRespectsCallerCancellation(t *testing.T) {
++	d := &stalledPoolDialer{started: make(chan struct{})}
++	c, _ := NewClient(Options{Dialer: d, Protocol: "yamux"})
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	done := make(chan struct{})
++	go func() { c.offer(ctx); close(done) }()
++	<-d.started
++	waiting, stop := context.WithTimeout(context.Background(), 30*time.Millisecond)
++	defer stop()
++	result := make(chan error, 1)
++	go func() { _, err := c.offer(waiting); result <- err }()
++	select {
++	case err := <-result:
++		if !errors.Is(err, context.DeadlineExceeded) {
++			t.Fatal(err)
++		}
++	case <-time.After(250 * time.Millisecond):
++		cancel()
++		<-done
++		<-result
++		t.Fatal("pool mutex ignored waiting caller deadline")
++	}
++	cancel()
++	<-done
++}

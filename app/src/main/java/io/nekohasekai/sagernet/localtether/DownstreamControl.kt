@@ -42,7 +42,9 @@ class DownstreamControl(private val context: Context) {
         get() = context.getSystemService("tethering")
             ?: error("tethering service unavailable")
 
-    val opPackageName: String get() = context.opPackageName
+    val opPackageName: String get() = if (android.os.Build.VERSION.SDK_INT >= 29) {
+        context.opPackageName
+    } else context.packageName
 
     private val managerClass: Class<*> get() = Class.forName("android.net.TetheringManager")
 
@@ -73,7 +75,7 @@ class DownstreamControl(private val context: Context) {
     }
 
     private fun startViaWifiManager(): Pair<Boolean, String> = runCatching {
-        val wifiManager = context.getSystemService(Context.WIFI_SERVICE)
+        val wifiManager = (context.applicationContext ?: context).getSystemService(Context.WIFI_SERVICE)
             ?: return false to "wifi service unavailable"
 
         val configClass = Class.forName("android.net.wifi.SoftApConfiguration")

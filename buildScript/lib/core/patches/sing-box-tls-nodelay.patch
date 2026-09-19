@@ -1,0 +1,83 @@
+diff --git a/common/tlsfragment/conn.go b/common/tlsfragment/conn.go
+index 040663bd2..3988ff819 100644
+--- a/common/tlsfragment/conn.go
++++ b/common/tlsfragment/conn.go
+@@ -121,12 +121,8 @@ func (c *Conn) Write(b []byte) (n int, err error) {
+ 					return
+ 				}
+ 			}
+-			if c.tcpConn != nil {
+-				err = c.tcpConn.SetNoDelay(false)
+-				if err != nil {
+-					return
+-				}
+-			}
++			// Keep Go's low-latency TCP behavior after the ClientHello.
++			// Enabling Nagle here delays subsequent small application writes.
+ 			return len(b), nil
+ 		}
+ 	}
+diff --git a/common/tlsfragment/conn_nodelay_linux_test.go b/common/tlsfragment/conn_nodelay_linux_test.go
+new file mode 100644
+index 000000000..2fe36d9b5
+--- /dev/null
++++ b/common/tlsfragment/conn_nodelay_linux_test.go
+@@ -0,0 +1,58 @@
++//go:build linux
++
++package tf_test
++
++import (
++	"context"
++	"crypto/tls"
++	"crypto/x509"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++	"time"
++
++	tf "github.com/sagernet/sing-box/common/tlsfragment"
++	"golang.org/x/sys/unix"
++)
++
++func TestFragmentDoesNotEnableNagleAfterHandshake(t *testing.T) {
++	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
++	defer server.Close()
++	roots := x509.NewCertPool()
++	roots.AddCert(server.Certificate())
++	for _, packet := range []bool{false, true} {
++		name := "record-only"
++		if packet {
++			name = "packet-and-record"
++		}
++		t.Run(name, func(t *testing.T) {
++			raw, err := net.Dial("tcp", server.Listener.Addr().String())
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer raw.Close()
++			raw.SetDeadline(time.Now().Add(3 * time.Second))
++			tcp := raw.(*net.TCPConn)
++			conn := tls.Client(tf.NewConn(tcp, context.Background(), packet, true, time.Millisecond), &tls.Config{RootCAs: roots, ServerName: "example.com"})
++			if err = conn.Handshake(); err != nil {
++				t.Fatal(err)
++			}
++			rc, err := tcp.SyscallConn()
++			if err != nil {
++				t.Fatal(err)
++			}
++			var value int
++			var socketErr error
++			if err = rc.Control(func(fd uintptr) { value, socketErr = unix.GetsockoptInt(int(fd), unix.IPPROTO_TCP, unix.TCP_NODELAY) }); err != nil {
++				t.Fatal(err)
++			}
++			if socketErr != nil {
++				t.Fatal(socketErr)
++			}
++			if value != 1 {
++				t.Fatal("fragmentation enabled Nagle on a default low-latency Go TCP socket")
++			}
++		})
++	}
++}
