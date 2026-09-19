@@ -1,15 +1,13 @@
-## v1.4.38 local candidate ? separate web traffic from peer load
+## v1.4.38 - browsing responsiveness under peer load
 
-- Give web/DNS ports (53, 80, 443, 853) separate mux transports from other ports when a connection-count limit of at least two is configured. Reserve one quarter of the configured limit, up to four connections, for this pool; retain the same total maximum. With the tested 24-connection configuration this is four web/DNS and twenty other transports. Single-connection, stream-limit-only and Brutal configurations retain their original pool behavior.
-- Track web/DNS response latency, pending attempts and slow-dial history separately from peer traffic. Peer connection counts no longer determine the initial web path, and busy peer attempts no longer displace a responsive web path.
-- Smooth response measurements in both directions so one destination's DNS/server delay does not immediately replace the network's latency history. Sustained slow responses still change path preference. Physical-network availability, circuit-breaker recovery and strict-priority groups remain in place.
+- Separate web/DNS mux traffic on ports 53, 80, 443 and 853 from other ports. With a configured connection limit of at least two, reserve one quarter of that limit, up to four connections, for web/DNS traffic while retaining the same total maximum. Single-connection, stream-limit-only and Brutal configurations retain their original behavior.
+- Keep web/DNS latency measurements, pending attempts and slow-path history separate from peer traffic, so a busy peer pool does not unnecessarily push browsing onto a slower network.
+- Smooth latency measurements to avoid switching networks because of one delayed response, while still reacting to sustained slowness.
 - Preserve FakeDNS, disabled real-DNS caching, Resolve Destination off, TFO, mux protocols and QUIC. No server settings changed.
 
-Controlled tests reproduced shared-transport blocking and peer-pressure interference before the fixes. The corrected tests pass for yamux, smux and h2mux. A stress test completed 256 peer transfers concurrently with 32 web requests, within the 24-transport budget, for each protocol. The full race-enabled native suite and four-ABI Android builds pass.
+Validation: regression tests reproduced the original blocking and selection problems and pass with these fixes. For yamux, smux and h2mux, a stress test completed 256 peer transfers alongside 32 web requests within a 24-transport budget. The full race-enabled native suite and four-ABI Android builds pass. Two final phone samples completed 24/24 Google requests; the latest sample had a 340 ms median first response and 585 ms maximum. Concurrent four-site checks and Google/YouTube TCP and HTTP/3 checks also passed.
 
-The first candidate had an eight-second Google body-download timeout and a Google TCP EOF; it was removed for comparison. After correcting the latency-outlier behavior, the revised candidate completed 12/12 Google searches (median 308 ms, maximum 1.351 s), plus successful Google/YouTube TCP and HTTP/3 checks. A four-site concurrent check completed with first responses of 180?412 ms while the phone log showed substantial peer activity. A second 12-request sample with peer activity also completed 12/12 (median 340 ms, maximum 585 ms). Short samples vary with network conditions and are not proof of universal improvement. Background NXDOMAIN and inbound client-reset errors remain; real provider DNS rejections are not fixed by pool isolation.
-
-This is a local candidate, not a public release. Port-based separation cannot distinguish bulk HTTPS transfers from browser traffic on the same ports, and reserving transport capacity can trade peak parallel throughput for isolation. It cannot guarantee unlimited traffic, zero latency or freedom from network/server congestion.
+Port-based separation cannot distinguish bulk HTTPS downloads from browsing on the same ports. Reserving capacity can trade peak parallel throughput for isolation; real-phone peak bulk throughput has not been benchmarked. Short samples do not guarantee unlimited traffic, zero latency or freedom from network/server stalls. Server-side DNS rejections, NXDOMAIN responses and client-reset errors remain separate issues.
 
 ## v1.4.37 ? browsing and network recovery fixes
 
