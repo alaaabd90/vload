@@ -44,8 +44,11 @@ fun parseTuic(url: String): TuicBean {
         link.queryParameter("alpn")?.let {
             alpn = it
         }
-        link.queryParameter("allow_insecure")?.let {
-            if (it == "1") allowInsecure = true
+        // s-ui emits "insecure"; keep the existing vload alias as well.
+        (link.queryParameter("allow_insecure")
+            ?: link.queryParameter("insecure")
+            ?: link.queryParameter("allowInsecure"))?.let {
+            allowInsecure = it == "1" || it.equals("true", ignoreCase = true)
         }
         link.queryParameter("disable_sni")?.let {
             if (it == "1") disableSNI = true
