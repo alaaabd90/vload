@@ -2,29 +2,24 @@ package libcore
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	mDNS "github.com/miekg/dns"
-	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/adapter/certificate"
-	"github.com/sagernet/sing-box/adapter/endpoint"
-	"github.com/sagernet/sing-box/adapter/inbound"
-	"github.com/sagernet/sing-box/adapter/outbound"
-	boxService "github.com/sagernet/sing-box/adapter/service"
+	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/dns/transport"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-box/protocol/direct"
-	"github.com/sagernet/sing/service"
+	"github.com/sagernet/sing/common/logger"
+	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 )
 
 // Exercise actual HTTP/TLS request cancellation and pooled DoH connections:
@@ -70,35 +65,29 @@ func testDNSWithRealHTTPSBlackhole(t *testing.T, parallel bool) {
 	wifi, lte := server(true), server(false)
 	defer wifi.Close()
 	defer lte.Close()
-	port := func(s *httptest.Server) int {
-		_, p, _ := net.SplitHostPort(s.Listener.Addr().String())
-		v, _ := strconv.Atoi(p)
-		return v
+	// Construct the actual core HTTPS transports directly. A full Box starts
+	// a host interface monitor whose asynchronous initial network reset can
+	// cancel the first query, unrelated to the slot behavior tested here.
+	makeTransport := func(server *httptest.Server, tag string) *transport.HTTPSTransport {
+		t.Helper()
+		u, err := url.Parse(server.URL + "/dns-query")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tlsConfig, err := tls.NewSTDClient(context.Background(), logger.NOP(), "127.0.0.1", option.OutboundTLSOptions{Insecure: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return transport.NewHTTPSRaw(dns.NewTransportAdapter("https", tag, nil), logger.NOP(), N.SystemDialer, u, make(http.Header), M.ParseSocksaddr(u.Host), tlsConfig)
 	}
-	registry := dns.NewTransportRegistry()
-	transport.RegisterHTTPS(registry)
-	dns.RegisterTransport[slotDNSOptions](registry, "vload_dns", newSlotDNSTransport)
-	outRegistry := outbound.NewRegistry()
-	direct.RegisterOutbound(outRegistry)
-	ctx := service.ContextWithDefaultRegistry(context.Background())
-	ctx = box.Context(ctx, inbound.NewRegistry(), outRegistry, endpoint.NewRegistry(), registry, boxService.NewRegistry(), certificate.NewRegistry())
-	raw := fmt.Sprintf(`{"log":{"level":"error"},"dns":{"servers":[{"type":"https","tag":"wifi","server":"127.0.0.1","server_port":%d,"tls":{"insecure":true}},{"type":"https","tag":"lte","server":"127.0.0.1","server_port":%d,"tls":{"insecure":true}},{"type":"vload_dns","tag":"dns-remote","servers":["wifi","lte"],"attempt_timeout":"150ms","retry_interval":"10s"}],"final":"dns-remote"},"outbounds":[{"type":"direct","tag":"direct"}]}`, port(wifi), port(lte))
-	var options option.Options
-	if err := options.UnmarshalJSONContext(ctx, []byte(raw)); err != nil {
-		t.Fatal(err)
-	}
-	instance, err := box.New(box.Options{Context: ctx, Options: options})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = instance.Start(); err != nil {
-		instance.Close()
-		t.Fatal(err)
-	}
-	defer instance.Close()
-	manager := service.FromContext[adapter.DNSTransportManager](ctx)
-	remote, _ := manager.Transport("dns-remote")
-	fallback := remote.(*slotDNSTransport)
+	wifiTransport, lteTransport := makeTransport(wifi, "wifi"), makeTransport(lte, "lte")
+	defer wifiTransport.Close()
+	defer lteTransport.Close()
+	fallback, _, _ := testDNSFailover(t, 0, dnsAnswer, dnsAnswer)
+	fallback.members = []adapter.DNSTransport{wifiTransport, lteTransport}
+	fallback.attemptTimeout = 150 * time.Millisecond
+	fallback.retryInterval = 10 * time.Second
+	remote := fallback
 	fallback.parallel = parallel
 	check := func() {
 		t.Helper()
