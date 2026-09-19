@@ -1,5 +1,5 @@
 diff --git a/protocol/group/weighted.go b/protocol/group/weighted.go
-index b1df0a58d..d03081fa8 100644
+index b1df0a58d..c6a38e3c5 100644
 --- a/protocol/group/weighted.go
 +++ b/protocol/group/weighted.go
 @@ -13,6 +13,8 @@ import (
@@ -634,7 +634,7 @@ index b1df0a58d..d03081fa8 100644
  		w.release(res.index)
  		if res.err == nil {
  			res.conn.Close()
-@@ -653,28 +796,47 @@ func abandonHedgeLoser[T io.Closer](w *Weighted, ch <-chan hedgeResult[T]) {
+@@ -653,28 +796,48 @@ func abandonHedgeLoser[T io.Closer](w *Weighted, ch <-chan hedgeResult[T]) {
  }
  
  func (w *Weighted) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -645,6 +645,7 @@ index b1df0a58d..d03081fa8 100644
  	if err != nil {
  		return nil, err
  	}
++	tracker.ready()
  	wrapped := &weightedCountedConn{Conn: conn}
 +	wrapped.onWrite = tracker.write
 +	wrapped.onResponse = func() {
@@ -685,9 +686,11 @@ index b1df0a58d..d03081fa8 100644
  		return ob.ListenPacket(dialCtx, destination)
  	})
  	if err != nil {
-@@ -683,16 +845,35 @@ func (w *Weighted) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
+@@ -682,17 +845,37 @@ func (w *Weighted) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
+ 	}
  	// bufio.NewPacketConn normalizes conn to N.NetPacketConn *before* it gets
  	// embedded below - see the type's doc comment for why this matters.
++	tracker.ready()
  	wrapped := &weightedCountedPacketConn{NetPacketConn: bufio.NewPacketConn(conn)}
 +	wrapped.onWrite = tracker.write
 +	wrapped.onResponse = func() {
@@ -722,7 +725,7 @@ index b1df0a58d..d03081fa8 100644
  	return wrapped, nil
  }
  
-@@ -752,8 +933,28 @@ func (w *Weighted) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn,
+@@ -752,8 +935,28 @@ func (w *Weighted) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn,
  // with their own close callback).
  type weightedCountedConn struct {
  	net.Conn
@@ -753,7 +756,7 @@ index b1df0a58d..d03081fa8 100644
  }
  
  func (c *weightedCountedConn) Close() error {
-@@ -780,8 +981,41 @@ func (c *weightedCountedConn) Upstream() any {
+@@ -780,8 +983,41 @@ func (c *weightedCountedConn) Upstream() any {
  // group, while TCP was unaffected since it doesn't re-address per packet.
  type weightedCountedPacketConn struct {
  	N.NetPacketConn
@@ -830,10 +833,10 @@ index 279b6d595..c4cbe4bd1 100644
  	for i := 0; i < 20; i++ {
 diff --git a/protocol/group/weighted_latency.go b/protocol/group/weighted_latency.go
 new file mode 100644
-index 000000000..dc92d3a81
+index 000000000..ea4025ce9
 --- /dev/null
 +++ b/protocol/group/weighted_latency.go
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,139 @@
 +package group
 +
 +import (
@@ -908,42 +911,77 @@ index 000000000..dc92d3a81
 +}
 +
 +type responseTracker struct {
-+	stats   *responseStats
-+	created time.Time
-+	written atomic.Pointer[time.Time]
-+	once    sync.Once
++	stats    *responseStats
++	created  time.Time
++	mu       sync.Mutex
++	written  time.Time
++	pending  bool
++	finished atomic.Bool
 +}
 +
 +func newResponseTracker(stats *responseStats) *responseTracker {
 +	stats.pending.Add(1)
-+	return &responseTracker{stats: stats, created: time.Now()}
++	return &responseTracker{stats: stats, created: time.Now(), pending: true}
 +}
 +
-+func (t *responseTracker) write() {
-+	if t.written.Load() == nil {
-+		now := time.Now()
-+		t.written.CompareAndSwap(nil, &now)
++// A completed dial may be a browser preconnection with no request yet.
++// Count dialing and actual first-response waits, but not application idle time.
++func (t *responseTracker) ready() {
++	t.mu.Lock()
++	defer t.mu.Unlock()
++	if !t.finished.Load() && t.written.IsZero() && t.pending {
++		t.stats.pending.Add(-1)
++		t.pending = false
 +	}
 +}
 +
-+func (t *responseTracker) response() {
-+	t.once.Do(func() {
-+		t.stats.pending.Add(-1)
-+		start := t.created
-+		if written := t.written.Load(); written != nil {
-+			start = *written
-+		}
-+		t.stats.observe(time.Since(start))
-+	})
++func (t *responseTracker) write() {
++	if t.finished.Load() {
++		return
++	}
++	t.mu.Lock()
++	defer t.mu.Unlock()
++	if t.finished.Load() || !t.written.IsZero() {
++		return
++	}
++	t.written = time.Now()
++	if !t.pending {
++		t.stats.pending.Add(1)
++		t.pending = true
++	}
 +}
 +
-+func (t *responseTracker) close() { t.once.Do(func() { t.stats.pending.Add(-1) }) }
++func (t *responseTracker) response() { t.finish(true) }
++func (t *responseTracker) close()    { t.finish(false) }
++
++func (t *responseTracker) finish(observe bool) {
++	if t.finished.Load() {
++		return
++	}
++	t.mu.Lock()
++	defer t.mu.Unlock()
++	if t.finished.Load() {
++		return
++	}
++	t.finished.Store(true)
++	if t.pending {
++		t.stats.pending.Add(-1)
++		t.pending = false
++	}
++	if observe {
++		start := t.created
++		if !t.written.IsZero() {
++			start = t.written
++		}
++		t.stats.observe(time.Since(start))
++	}
++}
 diff --git a/protocol/group/weighted_latency_test.go b/protocol/group/weighted_latency_test.go
 new file mode 100644
-index 000000000..70f657ac2
+index 000000000..57461615b
 --- /dev/null
 +++ b/protocol/group/weighted_latency_test.go
-@@ -0,0 +1,366 @@
+@@ -0,0 +1,434 @@
 +package group
 +
 +import (
@@ -1308,6 +1346,74 @@ index 000000000..70f657ac2
 +	w.release(index)
 +	if index != 1 {
 +		t.Fatal("sustained slow responses failed to change the preferred path")
++	}
++}
++
++// Browser speculative connections can stay open without sending any data.
++// They must not accumulate first-response pressure on an otherwise fast path.
++func TestIdlePreconnectionsDoNotDisplaceResponsiveWebPath(t *testing.T) {
++	w := newHedgeTestWeighted(&scriptedOutbound{}, &scriptedOutbound{})
++	w.members[0].outbound = &latencyOutbound{responseDelay: time.Millisecond}
++	w.responseStats(0).observe(10 * time.Millisecond)
++	w.responseStats(1).observe(100 * time.Millisecond)
++	w.priority = true
++	for i := 0; i < 16; i++ {
++		conn, err := w.DialContext(context.Background(), "tcp", M.ParseSocksaddr("example.com:443"))
++		if err != nil {
++			t.Fatal(err)
++		}
++		defer conn.Close()
++	}
++	w.priority = false
++	index, _, err := w.pick()
++	if err != nil {
++		t.Fatal(err)
++	}
++	w.release(index)
++	if index != 0 {
++		t.Fatal("idle preconnections displaced responsive web path")
++	}
++	if pending := w.responseStats(0).pending.Load(); pending != 0 {
++		t.Fatalf("idle preconnections retain %d pending responses", pending)
++	}
++}
++
++func TestResponseTrackerCountsDialAndRequestButNotIdle(t *testing.T) {
++	stats := new(responseStats)
++	tracker := newResponseTracker(stats)
++	if stats.pending.Load() != 1 {
++		t.Fatal("dial not counted")
++	}
++	tracker.ready()
++	tracker.ready()
++	if stats.pending.Load() != 0 {
++		t.Fatal("idle socket counted")
++	}
++	tracker.write()
++	tracker.write()
++	tracker.ready()
++	if stats.pending.Load() != 1 {
++		t.Fatal("request must count exactly once")
++	}
++	tracker.response()
++	tracker.close()
++	tracker.write()
++	tracker.ready()
++	if stats.pending.Load() != 0 {
++		t.Fatal("completed request leaked pressure")
++	}
++	for i := 0; i < 100; i++ {
++		tracker := newResponseTracker(stats)
++		var done sync.WaitGroup
++		done.Add(4)
++		go func() { defer done.Done(); tracker.ready() }()
++		go func() { defer done.Done(); tracker.write() }()
++		go func() { defer done.Done(); tracker.response() }()
++		go func() { defer done.Done(); tracker.close() }()
++		done.Wait()
++	}
++	if stats.pending.Load() != 0 {
++		t.Fatal("concurrent lifecycle leaked pressure")
 +	}
 +}
 diff --git a/protocol/group/weighted_network_recovery_test.go b/protocol/group/weighted_network_recovery_test.go
