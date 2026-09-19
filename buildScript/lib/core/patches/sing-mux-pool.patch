@@ -467,10 +467,10 @@ index 0000000..1e86e75
 +}
 diff --git a/client_recovery_test.go b/client_recovery_test.go
 new file mode 100644
-index 0000000..b441992
+index 0000000..da10f34
 --- /dev/null
 +++ b/client_recovery_test.go
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,146 @@
 +package mux
 +
 +import (
@@ -514,6 +514,7 @@ index 0000000..b441992
 +				}
 +				defer listener.Close()
 +				var accepts atomic.Int32
++				var requests atomic.Int32
 +				go func() {
 +					for {
 +						conn, err := listener.Accept()
@@ -548,7 +549,7 @@ index 0000000..b441992
 +										return
 +									}
 +									response := &serverConn{ExtendedConn: bufio.NewExtendedConn(stream)}
-+									if number == 1 {
++									if number == 1 && (shouldRetire || requests.Add(1) == 1) {
 +										response.HandshakeFailure(errors.New(message))
 +									} else {
 +										response.Write([]byte("Y"))
@@ -605,8 +606,8 @@ index 0000000..b441992
 +						t.Fatalf("expected replacement tunnel, got %d", accepts.Load())
 +					}
 +				} else {
-+					if err == nil || !strings.Contains(err.Error(), message) {
-+						t.Fatalf("expected per-destination error, got %v", err)
++					if err != nil {
++						t.Fatalf("destination error poisoned the next healthy request: %v", err)
 +					}
 +					if accepts.Load() != 1 {
 +						t.Fatal("destination failure discarded a healthy tunnel")
