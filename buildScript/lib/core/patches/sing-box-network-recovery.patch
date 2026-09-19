@@ -1,5 +1,5 @@
 diff --git a/protocol/group/weighted.go b/protocol/group/weighted.go
-index b1df0a58d..f35f57aef 100644
+index b1df0a58d..d06b927d8 100644
 --- a/protocol/group/weighted.go
 +++ b/protocol/group/weighted.go
 @@ -13,6 +13,7 @@ import (
@@ -50,17 +50,85 @@ index b1df0a58d..f35f57aef 100644
  	priority   bool // true when Mode == ModePriority
  	tieCursor  atomic.Int64
  	// pickMu serializes pick()'s headroom-check-then-acquire as a single
-@@ -124,6 +126,9 @@ type Weighted struct {
+@@ -124,34 +126,18 @@ type Weighted struct {
  	// Physical availability is separate from circuit-breaker cooldown. A
  	// fallback probe or an old recovery timer cannot resurrect a lost radio.
  	unavailableNetworks sync.Map // member index -> struct{}
+-	// hedgeLossStreak/hedgeSuppressedUntil let a member whose hedge races
+-	// are essentially always lost - not failed, just consistently slower
+-	// than whichever other member keeps winning for the same destination -
+-	// stop paying the cost of that race on every single new connection.
+-	// Racing a doomed primary still dials the secondary all the way
+-	// through to the same remote destination, so every connection through
+-	// this group was silently doubling the connection rate an origin
+-	// server saw. Confirmed live: a download target that answered a single
+-	// probe request normally (206) started returning 403 once a 30+
+-	// thread download - doubled by this hedging on every request - hit
+-	// it, consistent with the origin's own abuse/rate-limit protection
+-	// reacting to the burst. Suppression is time-bounded (see
+-	// hedgeSuppressionCooldown), not permanent, so a member that
+-	// genuinely recovers gets re-probed rather than staying penalized
+-	// forever. Scoped to only the speculative, timer-fired hedge (see
+-	// hedgedPick) - a primary that actually fails outright still hedges
+-	// unconditionally for correctness, this only trims the "just in case
+-	// it's slow" probe.
+-	hedgeLossStreak      []atomic.Int32
+-	hedgeSuppressedUntil []atomic.Int64 // unix nano; 0 = never suppressed
+-}
+-
+-// hedgeLossStreakThreshold consecutive lost hedge races (the timer fired
+-// and the *other* member's dial won) before a member's hedge gets
+-// suppressed for hedgeSuppressionCooldown.
 +	networkMu           sync.Mutex
 +	networkEpochs       map[int]memberNetwork
 +	networkChanged      chan struct{}
- 	// hedgeLossStreak/hedgeSuppressedUntil let a member whose hedge races
- 	// are essentially always lost - not failed, just consistently slower
- 	// than whichever other member keeps winning for the same destination -
-@@ -236,11 +241,37 @@ func (w *Weighted) UpdateAvailability(index int, available bool) {
++	// Repeated race losses temporarily deprioritize a slow primary when a
++	// healthy alternative exists. They must never disable backup attempts.
++	hedgeLossStreak []atomic.Int32
++	hedgeSlowUntil  []atomic.Int64
++}
++
+ const (
+ 	hedgeLossStreakThreshold = 8
+-	hedgeSuppressionCooldown = 30 * time.Second
++	hedgeSlowCooldown        = 30 * time.Second
+ )
+ 
+ func NewWeighted(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WeightedOutboundOptions) (adapter.Outbound, error) {
+@@ -174,19 +160,19 @@ func NewWeighted(ctx context.Context, router adapter.Router, logger log.ContextL
+ 		limiters[i] = newAdaptiveLimiter(int(member.MaxConnections))
+ 	}
+ 	return &Weighted{
+-		Adapter:              outbound.NewAdapter(C.TypeWeighted, tag, nil, tags),
+-		ctx:                  ctx,
+-		outboundMg:           service.FromContext[adapter.OutboundManager](ctx),
+-		connection:           service.FromContext[adapter.ConnectionManager](ctx),
+-		logger:               logger,
+-		tags:                 tags,
+-		picker:               newPCCPicker(weights),
+-		health:               make([]memberHealth, len(tags)),
+-		limiters:             limiters,
+-		priority:             options.Mode == ModePriority,
+-		memberConns:          make([]sync.Map, len(tags)),
+-		hedgeLossStreak:      make([]atomic.Int32, len(tags)),
+-		hedgeSuppressedUntil: make([]atomic.Int64, len(tags)),
++		Adapter:         outbound.NewAdapter(C.TypeWeighted, tag, nil, tags),
++		ctx:             ctx,
++		outboundMg:      service.FromContext[adapter.OutboundManager](ctx),
++		connection:      service.FromContext[adapter.ConnectionManager](ctx),
++		logger:          logger,
++		tags:            tags,
++		picker:          newPCCPicker(weights),
++		health:          make([]memberHealth, len(tags)),
++		limiters:        limiters,
++		priority:        options.Mode == ModePriority,
++		memberConns:     make([]sync.Map, len(tags)),
++		hedgeLossStreak: make([]atomic.Int32, len(tags)),
++		hedgeSlowUntil:  make([]atomic.Int64, len(tags)),
+ 	}, nil
+ }
+ 
+@@ -236,11 +222,37 @@ func (w *Weighted) UpdateAvailability(index int, available bool) {
  	if index < 0 || index >= len(w.health) {
  		return
  	}
@@ -98,7 +166,7 @@ index b1df0a58d..f35f57aef 100644
  	w.logger.Info("vload: slot ", index, " availability -> ", available)
  	w.picker.SetAvailable(index, available)
  	if index >= 0 && index < len(w.health) {
-@@ -257,13 +288,44 @@ func (w *Weighted) UpdateAvailability(index int, available bool) {
+@@ -257,13 +269,44 @@ func (w *Weighted) UpdateAvailability(index int, available bool) {
  	}
  }
  
@@ -144,7 +212,7 @@ index b1df0a58d..f35f57aef 100644
  // the breaker excludes the member via the same SetAvailable path an
  // external monitor would use, and schedules its own recovery - this needs
  // no external signal at all to eventually retry a member that's recovered.
-@@ -327,14 +389,9 @@ func (w *Weighted) recordResult(index int, err error) {
+@@ -327,14 +370,9 @@ func (w *Weighted) recordResult(index int, err error) {
  	})
  }
  
@@ -162,15 +230,29 @@ index b1df0a58d..f35f57aef 100644
  func (w *Weighted) pick() (int, weightedMember, error) {
  	return w.pickExcept(-1)
  }
-@@ -345,6 +402,7 @@ func (w *Weighted) pick() (int, weightedMember, error) {
+@@ -345,6 +383,21 @@ func (w *Weighted) pick() (int, weightedMember, error) {
  // pointless.
  func (w *Weighted) pickExcept(exclude int) (int, weightedMember, error) {
  	w.pickMu.Lock()
 +	w.ensureResponseStatsLocked()
++	// If all available members have slow history, still choose one and race
++	// its backup normally. Strict priority retains configured ordering.
++	preferResponsive := false
++	if !w.priority {
++		for i := range w.limiters {
++			if i != exclude && w.networkAvailable(i) && w.picker.IsAvailable(i) && !w.hedgeDeprioritized(i) {
++				preferResponsive = true
++				break
++			}
++		}
++	}
++	eligible := func(i int) bool {
++		return i != exclude && w.networkAvailable(i) && w.picker.IsAvailable(i) && (!preferResponsive || !w.hedgeDeprioritized(i))
++	}
  	best := -1
  	if w.priority {
  		// Strict configured order, first available - ignore headroom
-@@ -362,6 +420,21 @@ func (w *Weighted) pickExcept(exclude int) (int, weightedMember, error) {
+@@ -362,21 +415,50 @@ func (w *Weighted) pickExcept(exclude int) (int, weightedMember, error) {
  		}
  	} else {
  		var bestHeadroom int64
@@ -180,7 +262,7 @@ index b1df0a58d..f35f57aef 100644
 +		var bestKnown bool
 +		now := time.Now()
 +		for i := range w.limiters {
-+			if i != exclude && w.networkAvailable(i) && w.picker.IsAvailable(i) {
++			if eligible(i) {
 +				if _, known := w.responses[i].score(now); known {
 +					latencyKnown = true
 +					if delay := w.responses[i].delay.Load(); delay > referenceDelay {
@@ -192,7 +274,10 @@ index b1df0a58d..f35f57aef 100644
  		tied := 0
  		for i := range w.limiters {
  			if i == exclude {
-@@ -371,12 +444,26 @@ func (w *Weighted) pickExcept(exclude int) (int, weightedMember, error) {
+ 				continue
+ 			}
+-			if !w.networkAvailable(i) || !w.picker.IsAvailable(i) {
++			if !eligible(i) {
  				continue
  			}
  			h := w.limiters[i].headroom()
@@ -221,7 +306,57 @@ index b1df0a58d..f35f57aef 100644
  				tied++
  				// Reservoir-style rotation across tied candidates so repeated
  				// ties don't always resolve to the lowest index.
-@@ -482,9 +569,11 @@ func (w *Weighted) hedgeSuppressed(idx int) bool {
+@@ -436,14 +518,8 @@ func (w *Weighted) release(index int) {
+ 	w.limiters[index].release()
+ }
+ 
+-// recordHedgeOutcome feeds one hedge race's result into primaryIdx's loss
+-// streak: primaryWon resets it (this member just proved it can still win,
+-// or at least isn't the one losing right now), primaryWon==false means the
+-// timer-fired speculative hedge actually mattered - the other member's
+-// dial beat this member's - and increments it. Crossing
+-// hedgeLossStreakThreshold suppresses this member's speculative hedge for
+-// hedgeSuppressionCooldown; see hedgeSuppressed and the Weighted struct's
+-// doc comment for why.
++// A member that repeatedly loses setup races should not keep starting first.
++// This is a selection hint only: every slow dial retains its backup attempt.
+ func (w *Weighted) recordHedgeOutcome(primaryIdx int, primaryWon bool) {
+ 	if primaryIdx < 0 || primaryIdx >= len(w.hedgeLossStreak) {
+ 		return
+@@ -453,23 +529,20 @@ func (w *Weighted) recordHedgeOutcome(primaryIdx int, primaryWon bool) {
+ 		return
+ 	}
+ 	streak := w.hedgeLossStreak[primaryIdx].Add(1)
+-	if streak == hedgeLossStreakThreshold {
+-		until := time.Now().Add(hedgeSuppressionCooldown).UnixNano()
+-		w.hedgeSuppressedUntil[primaryIdx].Store(until)
+-		w.logger.Info("vload: slot ", primaryIdx, " hedge suppressed for ", hedgeSuppressionCooldown,
+-			" after ", streak, " consecutive lost hedge races (avoids doubling connection attempts against a target that's already slower on this path)")
++	if streak >= hedgeLossStreakThreshold {
++		now := time.Now()
++		previous := w.hedgeSlowUntil[primaryIdx].Swap(now.Add(hedgeSlowCooldown).UnixNano())
++		if previous <= now.UnixNano() {
++			w.logger.Info("vload: slot ", primaryIdx, " deprioritized for ", hedgeSlowCooldown, " after repeated slow setup; backup remains enabled")
++		}
+ 	}
+ }
+ 
+-// hedgeSuppressed reports whether idx's speculative hedge is currently
+-// suppressed - i.e. whether the timer-fired branch in hedgedPick should
+-// skip racing a second member rather than always doing so.
+-func (w *Weighted) hedgeSuppressed(idx int) bool {
+-	if idx < 0 || idx >= len(w.hedgeSuppressedUntil) {
++func (w *Weighted) hedgeDeprioritized(idx int) bool {
++	if idx < 0 || idx >= len(w.hedgeSlowUntil) {
+ 		return false
+ 	}
+-	until := w.hedgeSuppressedUntil[idx].Load()
+-	return until != 0 && time.Now().UnixNano() < until
++	return time.Now().UnixNano() < w.hedgeSlowUntil[idx].Load()
+ }
+ 
+ // hedgeDelay bounds how long a hedge race waits on the preferred member
+@@ -482,9 +555,11 @@ func (w *Weighted) hedgeSuppressed(idx int) bool {
  const hedgeDelay = 250 * time.Millisecond
  
  type hedgeResult[T io.Closer] struct {
@@ -236,7 +371,7 @@ index b1df0a58d..f35f57aef 100644
  }
  
  // hedgedPick races dial against the pick()-preferred member and, if that
-@@ -496,19 +585,31 @@ type hedgeResult[T io.Closer] struct {
+@@ -496,19 +571,31 @@ type hedgeResult[T io.Closer] struct {
  // A race loser is never counted against its member's health (see
  // abandonHedgeLoser): canceling mid-dial because the other side already won
  // is our choice, not evidence the member is unhealthy.
@@ -273,7 +408,7 @@ index b1df0a58d..f35f57aef 100644
  		}()
  		return ch, cancel
  	}
-@@ -528,6 +629,8 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+@@ -528,6 +615,8 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
  		}
  	}()
  
@@ -282,7 +417,7 @@ index b1df0a58d..f35f57aef 100644
  	trySecondary := func() {
  		if secondaryCh != nil {
  			return
-@@ -536,6 +639,16 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+@@ -536,6 +625,16 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
  		if pickErr != nil {
  			return // nothing else available right now; keep waiting on primary
  		}
@@ -299,7 +434,7 @@ index b1df0a58d..f35f57aef 100644
  		secondaryCh, secondaryCancel = start(idx, member)
  	}
  
-@@ -545,18 +658,25 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+@@ -545,18 +644,25 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
  	// stays nil (never fires in the select below) so failover only ever
  	// triggers on an actual primary failure, further down.
  	var timerC <-chan time.Time
@@ -327,7 +462,7 @@ index b1df0a58d..f35f57aef 100644
  			if res.err == nil {
  				w.recordHedgeOutcome(primaryIdx, true)
  				if secondaryCh != nil {
-@@ -567,24 +687,32 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+@@ -567,33 +673,34 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
  				// for their first write. The returned connection owns it now.
  				winnerCancel := primaryCancel
  				primaryCancel = nil
@@ -362,9 +497,19 @@ index b1df0a58d..f35f57aef 100644
 +				w.recordResult(res.index, res.err)
 +			}
  			if res.err == nil {
- 				// The secondary won a race the primary was still in when
- 				// this fired - i.e. hedging actually mattered here, not
-@@ -601,14 +729,30 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
+-				// The secondary won a race the primary was still in when
+-				// this fired - i.e. hedging actually mattered here, not
+-				// just a formality. Only counts against primaryIdx if it
+-				// hasn't already failed outright (primaryFailed): that
+-				// path already means the timer-fired speculative hedge
+-				// never applies, since trySecondary there runs
+-				// unconditionally for correctness - see hedgeSuppressed's
+-				// doc comment.
++				// Prefer other members after repeated losses to a backup.
+ 				if !primaryFailed {
+ 					w.recordHedgeOutcome(primaryIdx, false)
+ 				}
+@@ -601,25 +708,32 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
  				abandonHedgeLoser(w, primaryCh)
  				winnerCancel := secondaryCancel
  				secondaryCancel = nil
@@ -386,18 +531,30 @@ index b1df0a58d..f35f57aef 100644
  			if primaryFailed {
 -				return -1, zero, nil, res.err
 +				return -1, zero, nil, nil, nil, res.err
-+			}
+ 			}
+-		case <-timerC:
+-			// Only the speculative "primary might just be slow" hedge is
+-			// gated - a primary that genuinely fails still hedges
+-			// unconditionally via the primaryFailed branch above,
+-			// regardless of suppression. See hedgeSuppressed's doc
+-			// comment for why: this member has been losing this race
+-			// on essentially every connection lately, so racing it
+-			// again here would just double the connection rate an
+-			// origin server sees for no real benefit.
+-			if !w.hedgeSuppressed(primaryIdx) {
 +		case <-networkEvents:
 +			networkEvents = w.networkEvents()
-+			if !w.networkAvailable(primaryIdx) || (!w.priority && hedgeReady && !w.hedgeSuppressed(primaryIdx)) {
-+				trySecondary()
++			if !w.networkAvailable(primaryIdx) || (!w.priority && hedgeReady) {
+ 				trySecondary()
  			}
- 		case <-timerC:
++		case <-timerC:
 +			hedgeReady = true
- 			// Only the speculative "primary might just be slow" hedge is
- 			// gated - a primary that genuinely fails still hedges
- 			// unconditionally via the primaryFailed branch above,
-@@ -629,7 +773,7 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
++			// A history of slow setup must not take away the escape path.
++			trySecondary()
+ 		case <-ctx.Done():
+ 			primaryCancel()
+ 			if primaryCh != nil {
+@@ -629,7 +743,7 @@ func hedgedPick[T io.Closer](w *Weighted, ctx context.Context, dial func(context
  				secondaryCancel()
  				abandonHedgeLoser(w, secondaryCh)
  			}
@@ -406,7 +563,7 @@ index b1df0a58d..f35f57aef 100644
  		}
  	}
  }
-@@ -645,6 +789,7 @@ func abandonHedgeLoser[T io.Closer](w *Weighted, ch <-chan hedgeResult[T]) {
+@@ -645,6 +759,7 @@ func abandonHedgeLoser[T io.Closer](w *Weighted, ch <-chan hedgeResult[T]) {
  	}
  	go func() {
  		res := <-ch
@@ -414,7 +571,7 @@ index b1df0a58d..f35f57aef 100644
  		w.release(res.index)
  		if res.err == nil {
  			res.conn.Close()
-@@ -653,28 +798,47 @@ func abandonHedgeLoser[T io.Closer](w *Weighted, ch <-chan hedgeResult[T]) {
+@@ -653,28 +768,47 @@ func abandonHedgeLoser[T io.Closer](w *Weighted, ch <-chan hedgeResult[T]) {
  }
  
  func (w *Weighted) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -465,7 +622,7 @@ index b1df0a58d..f35f57aef 100644
  		return ob.ListenPacket(dialCtx, destination)
  	})
  	if err != nil {
-@@ -683,16 +847,35 @@ func (w *Weighted) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
+@@ -683,16 +817,35 @@ func (w *Weighted) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
  	// bufio.NewPacketConn normalizes conn to N.NetPacketConn *before* it gets
  	// embedded below - see the type's doc comment for why this matters.
  	wrapped := &weightedCountedPacketConn{NetPacketConn: bufio.NewPacketConn(conn)}
@@ -502,7 +659,7 @@ index b1df0a58d..f35f57aef 100644
  	return wrapped, nil
  }
  
-@@ -752,8 +935,28 @@ func (w *Weighted) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn,
+@@ -752,8 +905,28 @@ func (w *Weighted) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn,
  // with their own close callback).
  type weightedCountedConn struct {
  	net.Conn
@@ -533,7 +690,7 @@ index b1df0a58d..f35f57aef 100644
  }
  
  func (c *weightedCountedConn) Close() error {
-@@ -780,8 +983,41 @@ func (c *weightedCountedConn) Upstream() any {
+@@ -780,8 +953,41 @@ func (c *weightedCountedConn) Upstream() any {
  // group, while TCP was unaffected since it doesn't re-address per packet.
  type weightedCountedPacketConn struct {
  	N.NetPacketConn
@@ -680,10 +837,10 @@ index 000000000..52f908d36
 +func (t *responseTracker) close() { t.once.Do(func() { t.stats.pending.Add(-1) }) }
 diff --git a/protocol/group/weighted_latency_test.go b/protocol/group/weighted_latency_test.go
 new file mode 100644
-index 000000000..1f390e6dc
+index 000000000..53552fc25
 --- /dev/null
 +++ b/protocol/group/weighted_latency_test.go
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,271 @@
 +package group
 +
 +import (
@@ -693,6 +850,7 @@ index 000000000..1f390e6dc
 +	"io"
 +	"net"
 +	"sync"
++	"sync/atomic"
 +	"testing"
 +	"time"
 +)
@@ -906,6 +1064,52 @@ index 000000000..1f390e6dc
 +	old.response()
 +	if _, known := w.responseStats(0).score(time.Now()); known {
 +		t.Fatal("late response contaminated replacement network latency")
++	}
++}
++
++func TestRepeatedHedgeLossesPreferResponsiveMember(t *testing.T) {
++	slow, fast := &scriptedOutbound{delay: 2 * time.Second}, &scriptedOutbound{}
++	w := newHedgeTestWeighted(slow, fast)
++	w.hedgeLossStreak = make([]atomic.Int32, 2)
++	w.hedgeSlowUntil = make([]atomic.Int64, 2)
++	for i := 0; i < hedgeLossStreakThreshold; i++ {
++		w.recordHedgeOutcome(0, false)
++	}
++	w.limiters[1].acquire()
++	defer w.limiters[1].release()
++	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++	defer cancel()
++	c, err := w.DialContext(ctx, "tcp", M.ParseSocksaddr("example.com:443"))
++	if err != nil {
++		t.Fatal("known slow member blocked responsive member:", err)
++	}
++	defer c.Close()
++	if slow.calls.Load() != 0 {
++		t.Fatal("repeatedly losing member was still chosen as primary")
++	}
++}
++
++func TestRepeatedHedgeLossesNeverDisableBackup(t *testing.T) {
++	slow, fast := &scriptedOutbound{delay: 2 * time.Second}, &scriptedOutbound{}
++	w := newHedgeTestWeighted(slow, fast)
++	w.hedgeLossStreak = make([]atomic.Int32, 2)
++	w.hedgeSlowUntil = make([]atomic.Int64, 2)
++	for member := 0; member < 2; member++ {
++		for i := 0; i < hedgeLossStreakThreshold; i++ {
++			w.recordHedgeOutcome(member, false)
++		}
++	}
++	w.limiters[1].acquire()
++	defer w.limiters[1].release()
++	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++	defer cancel()
++	c, err := w.DialContext(ctx, "tcp", M.ParseSocksaddr("example.com:443"))
++	if err != nil {
++		t.Fatal("loss history disabled backup connection:", err)
++	}
++	c.Close()
++	if fast.calls.Load() != 1 {
++		t.Fatal("backup path was not tried")
 +	}
 +}
 diff --git a/protocol/group/weighted_network_recovery_test.go b/protocol/group/weighted_network_recovery_test.go

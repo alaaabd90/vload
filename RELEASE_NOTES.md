@@ -1,3 +1,13 @@
+## v1.4.37 local candidate ? preserve backup connection attempts
+
+- Correct an inverted load-balancer policy: eight consecutive lost connection races previously disabled the backup attempt for 30 seconds while continuing to select the slow primary. The phone log records this policy immediately before a YouTube connection stalled for 10.24 seconds.
+- Repeatedly slow members are now temporarily less preferred when another healthy member is available. A slow dial always retains its 250 ms backup attempt in load-balance mode, even when all members have slow history. Strict-priority groups retain their configured behavior.
+- Preserve FakeDNS, disabled real-DNS answer caching, Resolve Destination off, mux and QUIC. No server settings changed.
+
+Two regression tests reproduced the old timeout with a healthy backup and now pass. The full race-enabled native suite passes. Separate established-connection mux write timeouts under load are not proven resolved; no timeout values were changed and no established application data is replayed.
+
+Phone validation: installed version 1.4.37 (code 270). All 12 Google searches completed (median first response 341 ms, maximum 1.500 s). Google and YouTube TCP/HTTP3 checks returned 200. A concurrent four-request check was stopped after Instagram timed out at 8 seconds on an already-open LTE mux stream; the other three requests succeeded, and an isolated Instagram retry returned 200 in 451 ms. Five additional inbound TUN handshake resets occurred in 0?3 ms. The setup-failover fix is verified by regression tests, but established-stream stalls remain unresolved and no stable public release is claimed.
+
 ## v1.4.36 local candidate ? response-aware network selection
 
 - Select load-balance paths using recent first-response delay and pending connection attempts. Idle established connections no longer make a responsive path look busy.
