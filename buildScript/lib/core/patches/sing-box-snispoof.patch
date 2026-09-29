@@ -1,0 +1,2034 @@
+diff --git a/common/snispoof/NOTICE-byedpi.txt b/common/snispoof/NOTICE-byedpi.txt
+new file mode 100644
+index 000000000..3edae31ab
+--- /dev/null
++++ b/common/snispoof/NOTICE-byedpi.txt
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2024 hufrea
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/common/snispoof/fake.go b/common/snispoof/fake.go
+new file mode 100644
+index 000000000..658004196
+--- /dev/null
++++ b/common/snispoof/fake.go
+@@ -0,0 +1,76 @@
++package snispoof
++
++import (
++	"crypto/rand"
++	"encoding/binary"
++	"fmt"
++	"strings"
++)
++
++// FakeOptions affects only the first ClientHello, never the verified TLS identity.
++type FakeOptions struct {
++	ServerName string
++	TTL        int
++	DelayMS    int
++	OnQueued   func(int)
++}
++
++func ValidFakeName(name string) bool {
++	if len(name) == 0 || len(name) > 253 || !strings.Contains(name, ".") {
++		return false
++	}
++	for _, label := range strings.Split(name, ".") {
++		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
++			return false
++		}
++		for _, c := range label {
++			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
++				return false
++			}
++		}
++	}
++	return true
++}
++
++// FakeHello constructs a complete TLS 1.2 decoy, with fresh randomness and
++// padding to the exact sequence-space length that will later carry real bytes.
++// No real ClientHello secrets, session IDs, hostname or ECH payload are copied.
++func FakeHello(name string, size int) ([]byte, error) {
++	if !ValidFakeName(name) || size < 256 || size > 1200 {
++		return nil, fmt.Errorf("invalid fake hostname or hello size")
++	}
++	p := []byte{22, 3, 1, 0, 0, 1, 0, 0, 0, 3, 3}
++	random := make([]byte, 65)
++	if _, err := rand.Read(random); err != nil {
++		return nil, err
++	}
++	p = append(p, random[:32]...)
++	p = append(p, 32)
++	p = append(p, random[32:64]...)
++	p = append(p, 0, 8, 0xc0, 0x2f, 0xc0, 0x2b, 0xc0, 0x30, 0xc0, 0x2c, 1, 0)
++	extLen := len(p)
++	p = append(p, 0, 0)
++	add := func(typ uint16, body []byte) {
++		p = binary.BigEndian.AppendUint16(p, typ)
++		p = binary.BigEndian.AppendUint16(p, uint16(len(body)))
++		p = append(p, body...)
++	}
++	sni := binary.BigEndian.AppendUint16(nil, uint16(len(name)+3))
++	sni = append(sni, 0)
++	sni = binary.BigEndian.AppendUint16(sni, uint16(len(name)))
++	sni = append(sni, name...)
++	add(0, sni)
++	add(10, []byte{0, 4, 0, 29, 0, 23})
++	add(11, []byte{1, 0})
++	add(13, []byte{0, 8, 4, 3, 8, 4, 4, 1, 5, 3})
++	add(23, nil)
++	if size-len(p) < 4 {
++		return nil, fmt.Errorf("fake hostname exceeds hello capacity")
++	}
++	add(21, make([]byte, size-len(p)-4))
++	binary.BigEndian.PutUint16(p[extLen:extLen+2], uint16(len(p)-extLen-2))
++	binary.BigEndian.PutUint16(p[3:5], uint16(len(p)-5))
++	n := len(p) - 9
++	p[6], p[7], p[8] = byte(n>>16), byte(n>>8), byte(n)
++	return p, nil
++}
+diff --git a/common/snispoof/fake_linux.go b/common/snispoof/fake_linux.go
+new file mode 100644
+index 000000000..b20f5dbda
+--- /dev/null
++++ b/common/snispoof/fake_linux.go
+@@ -0,0 +1,159 @@
++//go:build linux
++
++package snispoof
++
++import (
++	"context"
++	"fmt"
++	"net"
++	"syscall"
++	"time"
++
++	N "github.com/sagernet/sing/common/network"
++	"golang.org/x/sys/unix"
++)
++
++// SendFakePrefix uses a normal connected TCP socket, not a raw socket. A short
++// TTL limits the decoy's reach. vmsplice/splice retain the mapped pages in the
++// retransmission queue; after the first transmission we replace those pages
++// with the real prefix and restore the original socket TTL. This technique is
++// described/implemented by hufrea/ByeDPI (MIT); see NOTICE-byedpi.txt.
++//
++// TTL must expire after the observer but before the server. A successful TLS
++// handshake alone cannot prove a DPI observer saw the decoy. No silent fallback
++// is allowed when this mechanism is unsupported or a syscall fails.
++func SendFakePrefix(ctx context.Context, conn net.Conn, original []byte, opt FakeOptions) (sent int, err error) {
++	if opt.TTL < 1 || opt.TTL > 32 || opt.DelayMS < 1 || opt.DelayMS > 50 {
++		return 0, fmt.Errorf("invalid fake TTL or delay")
++	}
++	n := min(1200, len(original)-1)
++	fake, err := FakeHello(opt.ServerName, n)
++	if err != nil {
++		return 0, err
++	}
++	socket, ok := N.UnwrapWriter(conn).(syscall.Conn)
++	if !ok {
++		return 0, fmt.Errorf("fake SNI needs a direct TCP socket; this dialer does not expose one")
++	}
++	raw, err := socket.SyscallConn()
++	if err != nil {
++		return 0, err
++	}
++	mem, err := unix.Mmap(-1, 0, 4096, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_PRIVATE|unix.MAP_ANON)
++	if err != nil {
++		return 0, fmt.Errorf("fake mmap: %w", err)
++	}
++	copy(mem, fake)
++	defer unix.Munmap(mem)
++	// On every exit, including cancellation or a partial send, queued pages must
++	// contain the original stream. The socket is closed on failure.
++	defer func() {
++		copy(mem, original[:n])
++		if err != nil {
++			conn.Close()
++		}
++	}()
++	pipe := []int{0, 0}
++	if err = unix.Pipe2(pipe, unix.O_CLOEXEC|unix.O_NONBLOCK); err != nil {
++		return 0, fmt.Errorf("fake pipe: %w", err)
++	}
++	defer unix.Close(pipe[0])
++	defer unix.Close(pipe[1])
++	vec := []unix.Iovec{{Base: &mem[0]}}
++	vec[0].SetLen(n)
++	queued, err := unix.Vmsplice(pipe[1], vec, unix.SPLICE_F_GIFT|unix.SPLICE_F_NONBLOCK)
++	if err != nil || queued != n {
++		return 0, fmt.Errorf("fake vmsplice queued %d/%d: %v", queued, n, err)
++	}
++	level, option := unix.IPPROTO_IP, unix.IP_TTL
++	if addr, ok := conn.RemoteAddr().(*net.TCPAddr); ok && addr.IP.To4() == nil {
++		level, option = unix.IPPROTO_IPV6, unix.IPV6_UNICAST_HOPS
++	}
++	var operation error
++	var oldTTL int
++	err = raw.Control(func(fd uintptr) {
++		oldTTL, operation = unix.GetsockoptInt(int(fd), level, option)
++		if operation == nil {
++			operation = unix.SetsockoptInt(int(fd), level, option, opt.TTL)
++		}
++	})
++	if err != nil {
++		return 0, err
++	}
++	if operation != nil {
++		return 0, fmt.Errorf("fake TTL: %w", operation)
++	}
++	defer func() {
++		var restore error
++		control := raw.Control(func(fd uintptr) { restore = unix.SetsockoptInt(int(fd), level, option, oldTTL) })
++		if err == nil && (control != nil || restore != nil) {
++			err = fmt.Errorf("restore fake TTL: %v %v", control, restore)
++			conn.Close()
++		}
++	}()
++	stopCancel := context.AfterFunc(ctx, func() { conn.Close() })
++	defer stopCancel()
++	err = raw.Write(func(fd uintptr) bool {
++		if operation = ctx.Err(); operation != nil {
++			return true
++		}
++		count, e := unix.Splice(pipe[0], nil, int(fd), nil, n-sent, unix.SPLICE_F_NONBLOCK)
++		if count > 0 {
++			sent += int(count)
++		}
++		if e == unix.EINTR || e == unix.EAGAIN {
++			return false
++		}
++		operation = e
++		return e != nil || sent == n
++	})
++	if err != nil {
++		return sent, err
++	}
++	if operation != nil {
++		return sent, fmt.Errorf("fake splice: %w", operation)
++	}
++	if sent != n {
++		return sent, fmt.Errorf("fake short splice: %d/%d", sent, n)
++	}
++	// Wait briefly for the first copy to leave the socket, before updating its
++	// retransmission pages. Bound the wait and honor handshake cancellation.
++	until := time.Now().Add(50 * time.Millisecond)
++	for {
++		var unsent uint32
++		err = raw.Control(func(fd uintptr) {
++			info, e := unix.GetsockoptTCPInfo(int(fd), unix.IPPROTO_TCP, unix.TCP_INFO)
++			operation = e
++			if e == nil {
++				unsent = info.Notsent_bytes
++			}
++		})
++		if err != nil {
++			return sent, err
++		}
++		if operation != nil {
++			return sent, operation
++		}
++		if unsent == 0 {
++			break
++		}
++		if time.Now().After(until) {
++			return sent, fmt.Errorf("fake initial transmission did not leave the socket")
++		}
++		select {
++		case <-ctx.Done():
++			return sent, ctx.Err()
++		case <-time.After(time.Millisecond):
++		}
++	}
++	select {
++	case <-ctx.Done():
++		return sent, ctx.Err()
++	case <-time.After(time.Duration(opt.DelayMS) * time.Millisecond):
++	}
++	copy(mem, original[:n])
++	if opt.OnQueued != nil {
++		opt.OnQueued(sent)
++	}
++	return sent, nil
++}
+diff --git a/common/snispoof/fake_other.go b/common/snispoof/fake_other.go
+new file mode 100644
+index 000000000..7fd5e0132
+--- /dev/null
++++ b/common/snispoof/fake_other.go
+@@ -0,0 +1,13 @@
++//go:build !linux
++
++package snispoof
++
++import (
++	"context"
++	"fmt"
++	"net"
++)
++
++func SendFakePrefix(ctx context.Context, conn net.Conn, original []byte, opt FakeOptions) (int, error) {
++	return 0, fmt.Errorf("rootless fake SNI requires Linux/Android zero-copy TCP support")
++}
+diff --git a/common/snispoof/fake_test.go b/common/snispoof/fake_test.go
+new file mode 100644
+index 000000000..5c9ed6d4a
+--- /dev/null
++++ b/common/snispoof/fake_test.go
+@@ -0,0 +1,44 @@
++package snispoof
++
++import (
++	"bytes"
++	"context"
++	"encoding/binary"
++	"testing"
++)
++
++func TestFakeHelloIdentitySizeAndRandomness(t *testing.T) {
++	for _, size := range []int{256, 512, 1199, 1200} {
++		a, err := FakeHello("api.twitter.com", size)
++		if err != nil {
++			t.Fatal(err)
++		}
++		b, _ := FakeHello("api.twitter.com", size)
++		if len(a) != size || int(binary.BigEndian.Uint16(a[3:5])) != size-5 {
++			t.Fatal("incorrect record length")
++		}
++		pos, n := SNIRange(a)
++		if pos < 0 || string(a[pos:pos+n]) != "api.twitter.com" {
++			t.Fatal("incorrect decoy SNI")
++		}
++		if bytes.Equal(a, b) {
++			t.Fatal("decoy randomness reused")
++		}
++	}
++	for _, bad := range []string{"", "https://api.twitter.com", "a..com", "-a.com", "a.com/", "a\x00.com"} {
++		if _, err := FakeHello(bad, 512); err == nil {
++			t.Fatalf("accepted invalid hostname %q", bad)
++		}
++	}
++}
++
++func TestFakeModeNeverFallsBackOnUnsupportedConnection(t *testing.T) {
++	raw := new(captureConn)
++	conn := NewConnWithFake(context.Background(), raw, "sni", 128, 0, &FakeOptions{ServerName: "api.twitter.com", TTL: 8, DelayMS: 10})
++	if _, err := conn.Write(hello(t)); err == nil {
++		t.Fatal("missing raw socket must fail fake mode")
++	}
++	if raw.Len() != 0 {
++		t.Fatal("silently sent real hello after fake injection failure")
++	}
++}
+diff --git a/common/snispoof/fragment.go b/common/snispoof/fragment.go
+new file mode 100644
+index 000000000..768777dc5
+--- /dev/null
++++ b/common/snispoof/fragment.go
+@@ -0,0 +1,252 @@
++// Package snispoof implements opt-in TLS fragmentation and rootless TCP decoys.
++package snispoof
++
++import (
++	"context"
++	"encoding/binary"
++	"fmt"
++	"io"
++	"net"
++	"sync"
++	"time"
++)
++
++type fragmentConn struct {
++	net.Conn
++	ctx      context.Context
++	strategy string
++	size     int
++	delay    time.Duration
++	mu       sync.Mutex
++	pending  []byte
++	finished bool
++	closed   chan struct{}
++	once     sync.Once
++	fake     *FakeOptions
++	fakeSent bool
++}
++
++func NewConn(ctx context.Context, conn net.Conn, strategy string, size int, delay time.Duration) net.Conn {
++	if strategy == "none" {
++		return conn
++	}
++	return &fragmentConn{Conn: conn, ctx: ctx, strategy: strategy, size: size, delay: delay, closed: make(chan struct{})}
++}
++
++// NewConnWithFake keeps fake injection and fragmentation inside the same first-hello writer.
++func NewConnWithFake(ctx context.Context, conn net.Conn, strategy string, size int, delay time.Duration, fake *FakeOptions) net.Conn {
++	if fake == nil {
++		return NewConn(ctx, conn, strategy, size, delay)
++	}
++	return &fragmentConn{Conn: conn, ctx: ctx, strategy: strategy, size: size, delay: delay, closed: make(chan struct{}), fake: fake}
++}
++
++func (c *fragmentConn) Close() error {
++	c.once.Do(func() { close(c.closed) })
++	return c.Conn.Close()
++}
++
++func writeAll(w io.Writer, p []byte) error {
++	for len(p) > 0 {
++		n, err := w.Write(p)
++		if n < 0 || n > len(p) {
++			return io.ErrShortWrite
++		}
++		p = p[n:]
++		if err != nil {
++			return err
++		}
++		if n == 0 {
++			return io.ErrShortWrite
++		}
++	}
++	return nil
++}
++
++// Buffer partial records rather than mistaking an arbitrary Write boundary
++// for a complete ClientHello. Only pre-response handshake records are split.
++func (c *fragmentConn) Write(p []byte) (int, error) {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	if c.finished {
++		return c.Conn.Write(p)
++	}
++	c.pending = append(c.pending, p...)
++	for len(c.pending) >= 5 {
++		if c.pending[0] != 22 {
++			err := writeAll(c.Conn, c.pending)
++			c.pending = nil
++			c.finished = true
++			if err != nil {
++				return 0, err
++			}
++			return len(p), nil
++		}
++		length := 5 + int(binary.BigEndian.Uint16(c.pending[3:5]))
++		if length > 18437 {
++			return 0, fmt.Errorf("SNISpoof: invalid TLS record length")
++		}
++		if len(c.pending) < length {
++			break
++		}
++		pieces := SplitRecord(c.pending[:length], c.strategy, c.size)
++		if c.fake != nil && !c.fakeSent {
++			var wire []byte
++			for _, piece := range pieces {
++				wire = append(wire, piece...)
++			}
++			consumed, err := SendFakePrefix(c.ctx, c.Conn, wire, *c.fake)
++			if err != nil {
++				return 0, fmt.Errorf("SNISpoof fake injection: %w", err)
++			}
++			c.fakeSent = true
++			for len(pieces) > 0 && consumed >= len(pieces[0]) {
++				consumed -= len(pieces[0])
++				pieces = pieces[1:]
++			}
++			if len(pieces) > 0 {
++				pieces[0] = pieces[0][consumed:]
++			}
++		}
++		for i, piece := range pieces {
++			if i > 0 && c.delay > 0 {
++				timer := time.NewTimer(c.delay)
++				select {
++				case <-timer.C:
++				case <-c.ctx.Done():
++					timer.Stop()
++					return 0, c.ctx.Err()
++				case <-c.closed:
++					timer.Stop()
++					return 0, net.ErrClosed
++				}
++			}
++			if err := writeAll(c.Conn, piece); err != nil {
++				return 0, err
++			}
++		}
++		c.pending = c.pending[length:]
++	}
++	return len(p), nil
++}
++
++func (c *fragmentConn) Read(p []byte) (int, error) {
++	c.mu.Lock()
++	// A peer response ends fragmentation; subsequent encrypted TLS records
++	// and application data follow the original connection unchanged.
++	c.finished = true
++	if len(c.pending) > 0 {
++		c.mu.Unlock()
++		return 0, io.ErrUnexpectedEOF
++	}
++	c.mu.Unlock()
++	return c.Conn.Read(p)
++}
++
++func SplitRecord(record []byte, strategy string, size int) [][]byte {
++	if size < 1 {
++		size = 64
++	}
++	if len(record) < 6 || record[0] != 22 {
++		return [][]byte{record}
++	}
++	if strategy == "none" {
++		return [][]byte{record}
++	}
++	if strategy == "sni" {
++		offset, length := SNIRange(record)
++		if length > 1 {
++			point := offset + length/2
++			return [][]byte{record[:point], record[point:]}
++		}
++		point := len(record) / 2
++		return [][]byte{record[:point], record[point:]}
++	}
++	var out [][]byte
++	if strategy == "record" {
++		for data := record[5:]; len(data) > 0; {
++			n := min(size, len(data))
++			part := make([]byte, 5+n)
++			copy(part, record[:5])
++			binary.BigEndian.PutUint16(part[3:5], uint16(n))
++			copy(part[5:], data[:n])
++			out = append(out, part)
++			data = data[n:]
++		}
++	} else {
++		for len(record) > 0 {
++			n := min(size, len(record))
++			out = append(out, record[:n])
++			record = record[n:]
++		}
++	}
++	return out
++}
++
++// Parse the actual ClientHello structure; never search random/cipher bytes
++// for a sequence that merely resembles an SNI extension.
++func SNIRange(p []byte) (int, int) {
++	if len(p) < 44 || p[0] != 22 || p[5] != 1 {
++		return -1, 0
++	}
++	end := 5 + int(binary.BigEndian.Uint16(p[3:5]))
++	if end > len(p) {
++		return -1, 0
++	}
++	handshakeEnd := 9 + (int(p[6]) << 16) + (int(p[7]) << 8) + int(p[8])
++	if handshakeEnd > end {
++		return -1, 0
++	}
++	pos := 43
++	skip := func(n int) bool {
++		if n < 0 || pos+n > end {
++			return false
++		}
++		pos += n
++		return true
++	}
++	if !skip(1+int(p[pos])) || pos+2 > end {
++		return -1, 0
++	}
++	n := int(binary.BigEndian.Uint16(p[pos : pos+2]))
++	if !skip(2+n) || pos >= end {
++		return -1, 0
++	}
++	if !skip(1+int(p[pos])) || pos+2 > end {
++		return -1, 0
++	}
++	extEnd := pos + 2 + int(binary.BigEndian.Uint16(p[pos:pos+2]))
++	pos += 2
++	if extEnd > end {
++		return -1, 0
++	}
++	for pos+4 <= extEnd {
++		typ := binary.BigEndian.Uint16(p[pos : pos+2])
++		n := int(binary.BigEndian.Uint16(p[pos+2 : pos+4]))
++		pos += 4
++		if pos+n > extEnd {
++			return -1, 0
++		}
++		if typ == 0 && n >= 5 {
++			listEnd := pos + 2 + int(binary.BigEndian.Uint16(p[pos:pos+2]))
++			q := pos + 2
++			if listEnd > pos+n {
++				return -1, 0
++			}
++			for q+3 <= listEnd {
++				kind := p[q]
++				size := int(binary.BigEndian.Uint16(p[q+1 : q+3]))
++				q += 3
++				if q+size > listEnd {
++					return -1, 0
++				}
++				if kind == 0 {
++					return q, size
++				}
++				q += size
++			}
++		}
++		pos += n
++	}
++	return -1, 0
++}
+diff --git a/common/snispoof/fragment_test.go b/common/snispoof/fragment_test.go
+new file mode 100644
+index 000000000..d5fcb5330
+--- /dev/null
++++ b/common/snispoof/fragment_test.go
+@@ -0,0 +1,118 @@
++package snispoof
++
++import (
++	"bytes"
++	"context"
++	"crypto/tls"
++	"encoding/binary"
++	"io"
++	"net"
++	"sync"
++	"testing"
++	"time"
++)
++
++type captureConn struct {
++	bytes.Buffer
++	short bool
++}
++
++func (c *captureConn) Read([]byte) (int, error) { return 0, io.EOF }
++func (c *captureConn) Write(p []byte) (int, error) {
++	if c.short && len(p) > 3 {
++		p = p[:3]
++	}
++	return c.Buffer.Write(p)
++}
++func (c *captureConn) Close() error                     { return nil }
++func (c *captureConn) LocalAddr() net.Addr              { return &net.TCPAddr{} }
++func (c *captureConn) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
++func (c *captureConn) SetDeadline(time.Time) error      { return nil }
++func (c *captureConn) SetReadDeadline(time.Time) error  { return nil }
++func (c *captureConn) SetWriteDeadline(time.Time) error { return nil }
++
++func hello(t *testing.T) []byte {
++	t.Helper()
++	c := new(captureConn)
++	client := tls.Client(c, &tls.Config{ServerName: "real.example.test"})
++	_ = client.Handshake()
++	data := append([]byte(nil), c.Bytes()...)
++	if len(data) < 5 {
++		t.Fatal("no hello")
++	}
++	return data[:5+int(binary.BigEndian.Uint16(data[3:5]))]
++}
++func payload(p []byte) []byte {
++	var result []byte
++	for len(p) >= 5 {
++		n := 5 + int(binary.BigEndian.Uint16(p[3:5]))
++		if n > len(p) {
++			return nil
++		}
++		result = append(result, p[5:n]...)
++		p = p[n:]
++	}
++	return result
++}
++func TestFragmentsPreserveRealHello(t *testing.T) {
++	h := hello(t)
++	offset, n := SNIRange(h)
++	if offset < 0 || string(h[offset:offset+n]) != "real.example.test" {
++		t.Fatal("SNI parser")
++	}
++	for _, mode := range []string{"sni", "record", "chunks"} {
++		t.Run(mode, func(t *testing.T) {
++			raw := &captureConn{short: true}
++			conn := NewConn(context.Background(), raw, mode, 31, 0)
++			// Deliberately split record header and body across writes.
++			for _, p := range [][]byte{h[:2], h[2:8], h[8:]} {
++				if n, err := conn.Write(p); err != nil || n != len(p) {
++					t.Fatalf("write: %d %v", n, err)
++				}
++			}
++			if mode == "record" {
++				if !bytes.Equal(payload(raw.Bytes()), h[5:]) {
++					t.Fatal("changed TLS handshake")
++				}
++			} else if !bytes.Equal(raw.Bytes(), h) {
++				t.Fatal("changed wire bytes")
++			}
++		})
++	}
++}
++func TestCancellationInterruptsFragmentDelay(t *testing.T) {
++	ctx, cancel := context.WithCancel(context.Background())
++	raw := new(captureConn)
++	conn := NewConn(ctx, raw, "chunks", 16, time.Second)
++	done := make(chan error, 1)
++	go func() { _, err := conn.Write(hello(t)); done <- err }()
++	time.Sleep(20 * time.Millisecond)
++	cancel()
++	select {
++	case err := <-done:
++		if err == nil {
++			t.Fatal("expected cancellation")
++		}
++	case <-time.After(time.Second):
++		t.Fatal("delay not canceled")
++	}
++}
++func TestCloseInterruptsFragmentDelay(t *testing.T) {
++	conn := NewConn(context.Background(), new(captureConn), "chunks", 16, time.Second)
++	h := hello(t)
++	var wg sync.WaitGroup
++	wg.Add(1)
++	go func() { defer wg.Done(); _, _ = conn.Write(h) }()
++	time.Sleep(20 * time.Millisecond)
++	conn.Close()
++	wg.Wait()
++}
++func FuzzSNIRange(f *testing.F) {
++	f.Add([]byte{22, 3, 3, 0, 0})
++	f.Fuzz(func(t *testing.T, p []byte) {
++		off, n := SNIRange(p)
++		if off >= 0 && (n < 0 || off+n > len(p)) {
++			t.Fatal("invalid range")
++		}
++	})
++}
+diff --git a/common/snispoof/late_reader.go b/common/snispoof/late_reader.go
+new file mode 100644
+index 000000000..69a1820a2
+--- /dev/null
++++ b/common/snispoof/late_reader.go
+@@ -0,0 +1,75 @@
++package snispoof
++
++import (
++	"io"
++	"net"
++	"sync"
++)
++
++// LateReader publishes a response body exactly once and closes late bodies
++// after cancellation. Only opt-in SNISpoof HTTP/gRPC streams use this path.
++type LateReader struct {
++	mu          sync.Mutex
++	ready       chan struct{}
++	reader      io.Reader
++	err         error
++	set, closed bool
++	cancel      func()
++}
++
++func NewLateReader(cancel func()) *LateReader {
++	return &LateReader{ready: make(chan struct{}), cancel: cancel}
++}
++func (r *LateReader) Setup(reader io.Reader, err error) {
++	r.mu.Lock()
++	if r.set || r.closed {
++		r.mu.Unlock()
++		if closer, ok := reader.(io.Closer); ok {
++			closer.Close()
++		}
++		return
++	}
++	r.reader = reader
++	r.err = err
++	r.set = true
++	if reader == nil && err == nil {
++		r.err = io.ErrUnexpectedEOF
++	}
++	close(r.ready)
++	r.mu.Unlock()
++}
++func (r *LateReader) Read(p []byte) (int, error) {
++	<-r.ready
++	r.mu.Lock()
++	reader, err, closed := r.reader, r.err, r.closed
++	r.mu.Unlock()
++	if closed {
++		return 0, net.ErrClosed
++	}
++	if err != nil {
++		return 0, err
++	}
++	return reader.Read(p)
++}
++func (r *LateReader) Close() error {
++	r.mu.Lock()
++	if r.closed {
++		r.mu.Unlock()
++		return nil
++	}
++	r.closed = true
++	if !r.set {
++		r.set = true
++		r.err = net.ErrClosed
++		close(r.ready)
++	}
++	reader := r.reader
++	r.mu.Unlock()
++	if r.cancel != nil {
++		r.cancel()
++	}
++	if closer, ok := reader.(io.Closer); ok {
++		return closer.Close()
++	}
++	return nil
++}
+diff --git a/common/snispoof/late_reader_test.go b/common/snispoof/late_reader_test.go
+new file mode 100644
+index 000000000..8d33a45b2
+--- /dev/null
++++ b/common/snispoof/late_reader_test.go
+@@ -0,0 +1,31 @@
++package snispoof
++
++import (
++	"io"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"testing"
++)
++
++type countedBody struct {
++	io.Reader
++	closed atomic.Int32
++}
++
++func (b *countedBody) Close() error { b.closed.Add(1); return nil }
++func TestLateResponseReadSetupAndClose(t *testing.T) {
++	for i := 0; i < 100; i++ {
++		body := &countedBody{Reader: strings.NewReader("ok")}
++		reader := NewLateReader(nil)
++		var wg sync.WaitGroup
++		wg.Add(3)
++		go func() { defer wg.Done(); reader.Setup(body, nil) }()
++		go func() { defer wg.Done(); io.ReadAll(reader) }()
++		go func() { defer wg.Done(); reader.Close() }()
++		wg.Wait()
++		if body.closed.Load() != 1 {
++			t.Fatal("late response leaked or double closed")
++		}
++	}
++}
+diff --git a/common/tls/client.go b/common/tls/client.go
+index 7b303687c..75e122af3 100644
+--- a/common/tls/client.go
++++ b/common/tls/client.go
+@@ -80,6 +80,9 @@ type ClientOptions struct {
+ }
+ 
+ func NewClientWithOptions(options ClientOptions) (Config, error) {
++	if options.Options.Enabled && options.Options.SNISpoof != nil {
++		return newSNIConfig(options)
++	}
+ 	if !options.Options.Enabled {
+ 		return nil, nil
+ 	}
+@@ -133,6 +136,9 @@ type defaultDialer struct {
+ }
+ 
+ func NewDialer(dialer N.Dialer, config Config) Dialer {
++	if c, ok := config.(*sniConfig); ok {
++		return &sniDialer{raw: dialer, config: c, health: make(map[string]sniHealth)}
++	}
+ 	return &defaultDialer{dialer, config}
+ }
+ 
+diff --git a/common/tls/snispoof.go b/common/tls/snispoof.go
+new file mode 100644
+index 000000000..a3f8fa4fb
+--- /dev/null
++++ b/common/tls/snispoof.go
+@@ -0,0 +1,417 @@
++package tls
++
++import (
++	"context"
++	"fmt"
++	"math/rand/v2"
++	"net"
++	"net/netip"
++	"os"
++	"sort"
++	"sync"
++	"sync/atomic"
++	"time"
++
++	"github.com/sagernet/sing-box/common/snispoof"
++	"github.com/sagernet/sing-box/option"
++	"github.com/sagernet/sing/common/logger"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	aTLS "github.com/sagernet/sing/common/tls"
++)
++
++type sniConfig struct {
++	Config
++	settings option.SNISpoofOptions
++	logger   logger.ContextLogger
++	epoch    *atomic.Uint64
++	fetchECH bool
++	echCache *sniECHCache
++	echFetch sniECHFetch
++}
++
++func newSNIConfig(o ClientOptions) (Config, error) {
++	s := *o.Options.SNISpoof
++	if s.Strategy == "" {
++		s.Strategy = "auto"
++	}
++	if s.FragmentSize == 0 {
++		s.FragmentSize = 64
++	}
++	if s.MaxCandidates == 0 {
++		s.MaxCandidates = 8
++	}
++	if s.AttemptTimeoutMS == 0 {
++		s.AttemptTimeoutMS = 4000
++	}
++	if s.TotalTimeoutMS == 0 {
++		s.TotalTimeoutMS = 20000
++	}
++	if s.RetryAfterSeconds == 0 {
++		s.RetryAfterSeconds = 120
++	}
++	if s.FakeEnabled {
++		if s.FakeSNI == "" {
++			s.FakeSNI = "api.twitter.com"
++		}
++		if s.FakeTTL == 0 {
++			s.FakeTTL = 8
++		}
++		if s.FakeDelayMS == 0 {
++			s.FakeDelayMS = 10
++		}
++		if !snispoof.ValidFakeName(s.FakeSNI) || s.FakeTTL < 1 || s.FakeTTL > 32 || s.FakeDelayMS < 1 || s.FakeDelayMS > 50 {
++			return nil, fmt.Errorf("SNISpoof: invalid fake hostname, TTL or delay")
++		}
++	}
++	switch s.Strategy {
++	case "auto", "none", "sni", "record", "chunks":
++	default:
++		return nil, fmt.Errorf("SNISpoof: unknown strategy")
++	}
++	if s.FragmentSize < 16 || s.FragmentSize > 4096 || s.DelayMS < 0 || s.DelayMS > 200 || s.MaxCandidates < 1 || s.MaxCandidates > 32 || s.AttemptTimeoutMS < 500 || s.AttemptTimeoutMS > 15000 || s.TotalTimeoutMS < s.AttemptTimeoutMS || s.TotalTimeoutMS > 60000 || s.RetryAfterSeconds < 10 || s.RetryAfterSeconds > 3600 {
++		return nil, fmt.Errorf("SNISpoof: settings outside supported limits")
++	}
++	if o.Options.Insecure || o.Options.DisableSNI || o.Options.Spoof != "" || o.Options.Reality != nil && o.Options.Reality.Enabled || o.Options.KernelTx || o.Options.KernelRx || o.Options.Engine != "" && o.Options.Engine != "go" {
++		return nil, fmt.Errorf("SNISpoof requires verified ordinary TLS, without Reality, raw spoofing or kTLS")
++	}
++	name := o.Options.ServerName
++	if name == "" {
++		name = o.ServerAddress
++	}
++	if name == "" || M.ParseAddr(name).IsValid() {
++		return nil, fmt.Errorf("SNISpoof: set the real TLS server domain")
++	}
++	if s.RequireECH && (o.Options.ECH == nil || !o.Options.ECH.Enabled) {
++		return nil, fmt.Errorf("SNISpoof: ECH is required but not configured")
++	}
++	for _, entry := range s.CandidateIPs {
++		if _, err := netip.ParseAddr(entry); err != nil {
++			if _, err = netip.ParsePrefix(entry); err != nil {
++				return nil, fmt.Errorf("SNISpoof: invalid candidate IP or CIDR %q", entry)
++			}
++		}
++	}
++	if len(s.CandidateIPs) > 32 {
++		return nil, fmt.Errorf("SNISpoof: at most 32 IP/CIDR entries")
++	}
++	// Build the original verified TLS configuration. Off-path options never
++	// reach this function, and ordinary profiles retain their released code path.
++	fetchECH := s.RequireECH && len(o.Options.ECH.Config) == 0 && o.Options.ECH.ConfigPath == ""
++	if fetchECH {
++		o.Options.ECH = nil
++	}
++	o.Options.SNISpoof = nil
++	o.Options.Fragment = false
++	o.Options.RecordFragment = false
++	base, err := NewClientWithOptions(o)
++	if err != nil {
++		return nil, err
++	}
++	return &sniConfig{Config: base, settings: s, logger: o.Logger, epoch: new(atomic.Uint64), fetchECH: fetchECH, echCache: new(sniECHCache)}, nil
++}
++
++func (c *sniConfig) Clone() Config {
++	return &sniConfig{Config: c.Config.Clone(), settings: c.settings, logger: c.logger, epoch: c.epoch, fetchECH: c.fetchECH, echCache: c.echCache, echFetch: c.echFetch}
++}
++func (c *sniConfig) STDConfig() (*STDConfig, error) {
++	return nil, fmt.Errorf("SNISpoof supports TLS over TCP only")
++}
++func (c *sniConfig) ClientHandshake(ctx context.Context, raw net.Conn) (Conn, error) {
++	if c.fetchECH {
++		return nil, fmt.Errorf("SNISpoof ECH bootstrap must complete before the TLS handshake")
++	}
++	strategy := c.settings.Strategy
++	if strategy == "auto" {
++		strategy = "sni"
++	}
++	var fake *snispoof.FakeOptions
++	if c.settings.FakeEnabled {
++		fake = &snispoof.FakeOptions{ServerName: c.settings.FakeSNI, TTL: c.settings.FakeTTL, DelayMS: c.settings.FakeDelayMS}
++		if c.settings.Diagnostics && c.logger != nil {
++			fake.OnQueued = func(n int) {
++				c.logger.InfoContext(ctx, "SNISpoof fake queued: sni=", c.settings.FakeSNI, " ttl=", c.settings.FakeTTL, " bytes=", n, "; real identity unchanged")
++			}
++		}
++	}
++	conn, err := aTLS.ClientHandshake(ctx, snispoof.NewConnWithFake(ctx, raw, strategy, c.settings.FragmentSize, time.Duration(c.settings.DelayMS)*time.Millisecond, fake), c.Config)
++	if err != nil {
++		return nil, fmt.Errorf("SNISpoof TLS/ECH handshake (%s): %w", strategy, err)
++	}
++	if c.settings.RequireECH && !conn.ConnectionState().ECHAccepted {
++		conn.Close()
++		return nil, fmt.Errorf("SNISpoof ECH was not accepted; plaintext fallback is disabled")
++	}
++	return conn, nil
++}
++
++type sniHealth struct {
++	failedUntil time.Time
++	success     time.Time
++	latency     time.Duration
++}
++type sniDialer struct {
++	raw        N.Dialer
++	config     *sniConfig
++	mu         sync.Mutex
++	health     map[string]sniHealth
++	candidates []string
++	generated  time.Time
++	epoch      uint64
++}
++
++// SNICandidates samples a bounded set. Explicit candidates precede discovery.
++// Known Cloudflare ranges are opt-in; certificate verification still binds
++// every connection to the profile's real domain, not to a scanned address.
++func SNICandidates(primary string, settings option.SNISpoofOptions) []string {
++	maxCount := settings.MaxCandidates
++	if maxCount <= 0 {
++		maxCount = 8
++	}
++	if maxCount > 32 {
++		maxCount = 32
++	}
++	result := []string{}
++	seen := map[string]bool{}
++	add := func(s string) {
++		if s != "" && !seen[s] && len(result) < maxCount {
++			seen[s] = true
++			result = append(result, s)
++		}
++	}
++	// Explicit, tested addresses take precedence over the original target.
++	entries := append([]string(nil), settings.CandidateIPs...)
++	if settings.DiscoverCloudflare {
++		entries = append(entries, "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13")
++	}
++	for _, s := range entries {
++		if ip, err := netip.ParseAddr(s); err == nil {
++			add(ip.String())
++		}
++	}
++	add(primary)
++	for round := 0; round < maxCount && len(result) < maxCount; round++ {
++		for _, s := range entries {
++			prefix, err := netip.ParsePrefix(s)
++			if err != nil {
++				continue
++			}
++			base := prefix.Masked().Addr()
++			bits := prefix.Bits()
++			if base.Is4() {
++				b := base.As4()
++				for i := 0; i < 4; i++ {
++					for bit := 0; bit < 8; bit++ {
++						if i*8+bit >= bits && rand.IntN(2) == 1 {
++							b[i] |= 1 << uint(7-bit)
++						}
++					}
++				}
++				add(netip.AddrFrom4(b).String())
++			} else {
++				b := base.As16()
++				for i := 0; i < 16; i++ {
++					for bit := 0; bit < 8; bit++ {
++						if i*8+bit >= bits && rand.IntN(2) == 1 {
++							b[i] |= 1 << uint(7-bit)
++						}
++					}
++				}
++				add(netip.AddrFrom16(b).String())
++			}
++		}
++	}
++	return result
++}
++
++func (d *sniDialer) DialContext(ctx context.Context, network string, dest M.Socksaddr) (net.Conn, error) {
++	if N.NetworkName(network) != N.NetworkTCP {
++		return nil, os.ErrInvalid
++	}
++	return d.DialTLSContext(ctx, dest)
++}
++func (d *sniDialer) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
++	return nil, os.ErrInvalid
++}
++func (d *sniDialer) DialTLSContext(ctx context.Context, dest M.Socksaddr) (Conn, error) {
++	s := d.config.settings
++	ctx, cancel := context.WithTimeout(ctx, time.Duration(s.TotalTimeoutMS)*time.Millisecond)
++	defer cancel()
++	var echConfig []byte
++	if d.config.fetchECH {
++		var err error
++		echConfig, err = d.config.resolveECH(ctx, d.raw)
++		if err != nil {
++			return nil, err
++		}
++	}
++	now := time.Now()
++	epoch := d.config.epoch.Load()
++	d.mu.Lock()
++	if d.epoch != epoch {
++		d.health = make(map[string]sniHealth)
++		d.candidates = nil
++		d.epoch = epoch
++	}
++	if len(d.candidates) == 0 || now.Sub(d.generated) > time.Duration(s.RetryAfterSeconds)*time.Second {
++		d.candidates = SNICandidates(dest.AddrString(), s)
++		d.generated = now
++		// Bound memory when discovery resamples new addresses.
++		for key, h := range d.health {
++			if now.Sub(h.success) > time.Duration(s.RetryAfterSeconds)*time.Second && now.After(h.failedUntil) {
++				delete(d.health, key)
++			}
++		}
++	}
++	candidates := append([]string(nil), d.candidates...)
++	strategies := []string{s.Strategy}
++	if s.Strategy == "auto" {
++		strategies = []string{"sni", "record", "chunks"}
++	}
++	type attempt struct {
++		ip, strategy string
++		ttl          int
++		key          string
++		health       sniHealth
++	}
++	var attempts []attempt
++	ttls := []int{0}
++	if s.FakeEnabled {
++		ttls = []int{s.FakeTTL}
++		if s.FakeAutoTTL {
++			for _, value := range []int{s.FakeTTL - 2, s.FakeTTL - 4, 2} {
++				if value < 1 || value >= s.FakeTTL {
++					continue
++				}
++				found := false
++				for _, v := range ttls {
++					if value == v {
++						found = true
++					}
++				}
++				if !found {
++					ttls = append(ttls, value)
++				}
++			}
++		}
++	}
++	for _, ip := range candidates {
++		for _, ttl := range ttls {
++			for _, method := range strategies {
++				key := fmt.Sprintf("%s/%s/ttl%d", ip, method, ttl)
++				attempts = append(attempts, attempt{ip: ip, strategy: method, ttl: ttl, key: key, health: d.health[key]})
++			}
++		}
++	}
++	d.mu.Unlock()
++	sort.SliceStable(attempts, func(i, j int) bool {
++		a, b := attempts[i].health, attempts[j].health
++		af, bf := now.Before(a.failedUntil), now.Before(b.failedUntil)
++		if af != bf {
++			return !af
++		}
++		ag, bg := !a.success.IsZero() && now.Sub(a.success) < time.Duration(s.RetryAfterSeconds)*time.Second, !b.success.IsZero() && now.Sub(b.success) < time.Duration(s.RetryAfterSeconds)*time.Second
++		if ag != bg {
++			return ag
++		}
++		if ag && bg {
++			return a.latency < b.latency
++		}
++		return false
++	})
++	var last error
++	for _, a := range attempts {
++		if err := ctx.Err(); err != nil {
++			return nil, fmt.Errorf("SNISpoof connection budget: %w (last: %v)", err, last)
++		}
++		// Quarantine failed paths until retry time; if all are quarantined fail
++		// promptly rather than repeating every failing handshake for every stream.
++		if time.Now().Before(a.health.failedUntil) {
++			continue
++		}
++		started := time.Now()
++		attemptCtx, stop := context.WithTimeout(ctx, time.Duration(s.AttemptTimeoutMS)*time.Millisecond)
++		raw, err := d.raw.DialContext(attemptCtx, N.NetworkTCP, M.ParseSocksaddrHostPort(a.ip, dest.Port))
++		var conn Conn
++		if err != nil {
++			err = fmt.Errorf("SNISpoof TCP connect: %w", err)
++		} else {
++			config := d.config.Clone().(*sniConfig)
++			config.settings.Strategy = a.strategy
++			config.settings.FakeTTL = a.ttl
++			if len(echConfig) > 0 {
++				capable, ok := config.Config.(ECHCapableConfig)
++				if !ok {
++					raw.Close()
++					stop()
++					return nil, fmt.Errorf("SNISpoof TLS engine cannot enable ECH")
++				}
++				capable.SetECHConfigList(echConfig)
++				config.fetchECH = false
++			}
++			conn, err = config.ClientHandshake(attemptCtx, raw)
++			if err != nil {
++				raw.Close()
++			}
++		}
++		stop()
++		elapsed := time.Since(started)
++		if ctx.Err() != nil {
++			if conn != nil {
++				conn.Close()
++			}
++			return nil, ctx.Err()
++		}
++		d.mu.Lock()
++		if d.config.epoch.Load() != epoch {
++			d.mu.Unlock()
++			if conn != nil {
++				conn.Close()
++			}
++			return nil, fmt.Errorf("SNISpoof network changed during connection")
++		}
++		if err == nil {
++			d.health[a.key] = sniHealth{success: time.Now(), latency: elapsed}
++		} else {
++			d.health[a.key] = sniHealth{failedUntil: time.Now().Add(time.Duration(s.RetryAfterSeconds) * time.Second)}
++		}
++		d.mu.Unlock()
++		if s.Diagnostics && d.config.logger != nil {
++			if err == nil {
++				d.config.logger.InfoContext(ctx, "SNISpoof connected: ", a.ip, " strategy=", a.strategy, " fake=", s.FakeEnabled, " fake_ttl=", a.ttl, " ECH accepted=", conn.ConnectionState().ECHAccepted, " handshake=", elapsed.Milliseconds(), "ms")
++			} else {
++				d.config.logger.WarnContext(ctx, "SNISpoof attempt: ", a.ip, " strategy=", a.strategy, " fake_ttl=", a.ttl, " ", err)
++			}
++		}
++		if err == nil {
++			return conn, nil
++		}
++		last = err
++	}
++	if last == nil {
++		last = fmt.Errorf("all candidates are cooling down; retry within %d seconds", s.RetryAfterSeconds)
++	}
++	return nil, fmt.Errorf("SNISpoof exhausted verified TLS candidates: %w", last)
++}
++
++// IsSNISpoof lets transports preserve their authority/ALPN while moving TLS
++// into this dialer (needed by the optional full gRPC implementation).
++func IsSNISpoof(config Config) bool { _, ok := config.(*sniConfig); return ok }
++
++func ResetSNISpoof(config Config) {
++	if c, ok := config.(*sniConfig); ok {
++		c.epoch.Add(1)
++	}
++}
++func ResetSNISpoofDialer(dialer N.Dialer) {
++	if d, ok := dialer.(*sniDialer); ok {
++		d.config.epoch.Add(1)
++	}
++}
++
++func SNISpoofTimeout(config Config) time.Duration {
++	if c, ok := config.(*sniConfig); ok {
++		return time.Duration(c.settings.TotalTimeoutMS+3000) * time.Millisecond
++	}
++	return 0
++}
+diff --git a/common/tls/snispoof_ech.go b/common/tls/snispoof_ech.go
+new file mode 100644
+index 000000000..18dc3317f
+--- /dev/null
++++ b/common/tls/snispoof_ech.go
+@@ -0,0 +1,134 @@
++package tls
++
++import (
++	"bytes"
++	"context"
++	ctls "crypto/tls"
++	"encoding/base64"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"sync"
++	"time"
++
++	mdns "github.com/miekg/dns"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++)
++
++type sniECHCache struct {
++	mu      sync.Mutex
++	config  []byte
++	expires time.Time
++}
++type sniECHFetch func(context.Context, N.Dialer, string) ([]byte, time.Duration, error)
++
++// Bootstrap ECH before the VPN TLS connection exists. Using the VPN's remote
++// DNS transport here can recursively dial the very profile being established.
++// These HTTPS requests use the SAME protected/slot-bound raw dialer and fixed
++// resolver IPs; they never send the real query name in plaintext DNS or SNI.
++func fetchSNIECH(ctx context.Context, raw N.Dialer, name string) ([]byte, time.Duration, error) {
++	message := new(mdns.Msg).SetQuestion(mdns.Fqdn(name), mdns.TypeHTTPS)
++	wire, err := message.Pack()
++	if err != nil {
++		return nil, 0, err
++	}
++	var last error
++	for _, ip := range []string{"1.1.1.1", "1.0.0.1"} {
++		attempt, cancel := context.WithTimeout(ctx, 3*time.Second)
++		transport := &http.Transport{Proxy: nil, DisableKeepAlives: true,
++			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
++				return raw.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddrHostPort(ip, 443))
++			},
++			TLSClientConfig: &ctls.Config{ServerName: "cloudflare-dns.com", MinVersion: ctls.VersionTLS12},
++		}
++		client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
++		req, err := http.NewRequestWithContext(attempt, http.MethodPost, "https://cloudflare-dns.com/dns-query", bytes.NewReader(wire))
++		if err != nil {
++			cancel()
++			return nil, 0, err
++		}
++		req.Header.Set("Content-Type", "application/dns-message")
++		req.Header.Set("Accept", "application/dns-message")
++		response, err := client.Do(req)
++		var config []byte
++		var ttl time.Duration
++		if err == nil {
++			if response.StatusCode != http.StatusOK {
++				err = fmt.Errorf("ECH resolver returned HTTP %d", response.StatusCode)
++			} else {
++				var body []byte
++				body, err = io.ReadAll(io.LimitReader(response.Body, 65537))
++				if err == nil {
++					if len(body) > 65536 {
++						err = fmt.Errorf("ECH DNS response too large")
++					} else {
++						config, ttl, err = parseSNIECHResponse(body, message)
++					}
++				}
++			}
++			response.Body.Close()
++		}
++		transport.CloseIdleConnections()
++		cancel()
++		if err == nil {
++			return config, ttl, nil
++		}
++		last = err
++		if ctx.Err() != nil {
++			return nil, 0, ctx.Err()
++		}
++	}
++	return nil, 0, fmt.Errorf("SNISpoof ECH bootstrap failed (encrypted DNS); supply an ECH configuration in this profile: %w", last)
++}
++
++func parseSNIECHResponse(body []byte, query *mdns.Msg) ([]byte, time.Duration, error) {
++	var message mdns.Msg
++	if err := message.Unpack(body); err != nil {
++		return nil, 0, err
++	}
++	if !message.Response || message.Id != query.Id || message.Rcode != mdns.RcodeSuccess || len(message.Question) != 1 || message.Question[0] != query.Question[0] {
++		return nil, 0, fmt.Errorf("invalid ECH DNS response")
++	}
++	for _, rr := range message.Answer {
++		if record, ok := rr.(*mdns.HTTPS); ok {
++			for _, value := range record.Value {
++				if value.Key() == mdns.SVCB_ECHCONFIG {
++					config, err := base64.StdEncoding.DecodeString(value.String())
++					if err != nil {
++						return nil, 0, err
++					}
++					if len(config) < 2 {
++						return nil, 0, fmt.Errorf("empty ECH config")
++					}
++					return config, time.Duration(min(record.Hdr.Ttl, 3600)) * time.Second, nil
++				}
++			}
++		}
++	}
++	return nil, 0, fmt.Errorf("the real domain has no ECH configuration")
++}
++
++func (c *sniConfig) resolveECH(ctx context.Context, raw N.Dialer) ([]byte, error) {
++	c.echCache.mu.Lock()
++	cached := append([]byte(nil), c.echCache.config...)
++	expires := c.echCache.expires
++	c.echCache.mu.Unlock()
++	if len(cached) > 0 && time.Now().Before(expires) {
++		return cached, nil
++	}
++	fetch := c.echFetch
++	if fetch == nil {
++		fetch = fetchSNIECH
++	}
++	config, ttl, err := fetch(ctx, raw, c.ServerName())
++	if err != nil {
++		return nil, err
++	}
++	c.echCache.mu.Lock()
++	c.echCache.config = append([]byte(nil), config...)
++	c.echCache.expires = time.Now().Add(ttl)
++	c.echCache.mu.Unlock()
++	return config, nil
++}
+diff --git a/common/tls/snispoof_ech_test.go b/common/tls/snispoof_ech_test.go
+new file mode 100644
+index 000000000..b74d998c3
+--- /dev/null
++++ b/common/tls/snispoof_ech_test.go
+@@ -0,0 +1,76 @@
++package tls
++
++import (
++	"context"
++	"encoding/pem"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	mdns "github.com/miekg/dns"
++	"github.com/sagernet/sing-box/option"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++)
++
++func TestSNISpoofAutomaticECHUsesBoundDialerAndCachesKeys(t *testing.T) {
++	server, echPEM := testServer(t, true)
++	block, _ := pem.Decode([]byte(echPEM))
++	opts := option.OutboundTLSOptions{Enabled: true, ServerName: "example.com", Certificate: []string{string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))}, ECH: &option.OutboundECHOptions{Enabled: true}, SNISpoof: &option.SNISpoofOptions{Strategy: "sni", RequireECH: true, MaxCandidates: 1}}
++	config, err := NewClientWithOptions(ClientOptions{Context: context.Background(), Options: opts, ServerAddress: "example.com"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	raw := &testSNIDialer{address: server.Listener.Addr().String()}
++	var calls atomic.Int32
++	c := config.(*sniConfig)
++	if !c.fetchECH {
++		t.Fatal("dynamic ECH not bootstrapped")
++	}
++	c.echFetch = func(ctx context.Context, dialer N.Dialer, name string) ([]byte, time.Duration, error) {
++		calls.Add(1)
++		if dialer != raw || name != "example.com" {
++			t.Error("wrong physical dialer or name")
++		}
++		return block.Bytes, time.Hour, nil
++	}
++	d := NewDialer(raw, c)
++	for i := 0; i < 2; i++ {
++		conn, err := d.DialTLSContext(context.Background(), M.ParseSocksaddr("127.0.0.1:443"))
++		if err != nil {
++			t.Fatal(err)
++		}
++		if !conn.ConnectionState().ECHAccepted {
++			t.Fatal("ECH not accepted")
++		}
++		conn.Close()
++	}
++	if calls.Load() != 1 {
++		t.Fatal("ECH config not cached")
++	}
++}
++
++func TestSNISpoofECHResponseValidation(t *testing.T) {
++	query := new(mdns.Msg).SetQuestion("example.com.", mdns.TypeHTTPS)
++	response := new(mdns.Msg).SetReply(query)
++	response.Answer = []mdns.RR{&mdns.HTTPS{SVCB: mdns.SVCB{Hdr: mdns.RR_Header{Name: "example.com.", Rrtype: mdns.TypeHTTPS, Class: mdns.ClassINET, Ttl: 120}, Priority: 1, Target: ".", Value: []mdns.SVCBKeyValue{&mdns.SVCBECHConfig{ECH: []byte{0, 1, 42}}}}}}
++	body, err := response.Pack()
++	if err != nil {
++		t.Fatal(err)
++	}
++	config, ttl, err := parseSNIECHResponse(body, query)
++	if err != nil || len(config) != 3 || ttl != 120*time.Second {
++		t.Fatalf("%x %v %v", config, ttl, err)
++	}
++	response.Id++
++	body, _ = response.Pack()
++	if _, _, err := parseSNIECHResponse(body, query); err == nil {
++		t.Fatal("accepted mismatched DNS response")
++	}
++	response.SetReply(query)
++	response.Answer = nil
++	body, _ = response.Pack()
++	if _, _, err := parseSNIECHResponse(body, query); err == nil {
++		t.Fatal("missing ECH treated as success")
++	}
++}
+diff --git a/common/tls/snispoof_test.go b/common/tls/snispoof_test.go
+new file mode 100644
+index 000000000..b5fff1408
+--- /dev/null
++++ b/common/tls/snispoof_test.go
+@@ -0,0 +1,167 @@
++package tls
++
++import (
++	"context"
++	ctls "crypto/tls"
++	"crypto/x509"
++	"encoding/pem"
++	"errors"
++	"io"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/option"
++	M "github.com/sagernet/sing/common/metadata"
++)
++
++type testSNIDialer struct {
++	address string
++	calls   sync.Map
++}
++
++func (d *testSNIDialer) DialContext(ctx context.Context, network string, dest M.Socksaddr) (net.Conn, error) {
++	count, _ := d.calls.LoadOrStore(dest.AddrString(), new(atomic.Int32))
++	count.(*atomic.Int32).Add(1)
++	if dest.AddrString() == "192.0.2.1" {
++		return nil, errors.New("simulated unavailable physical path")
++	}
++	return (&net.Dialer{}).DialContext(ctx, "tcp", d.address)
++}
++func (d *testSNIDialer) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
++	return nil, errors.New("UDP not supported")
++}
++
++func testServer(t *testing.T, ech bool) (*httptest.Server, string) {
++	t.Helper()
++	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
++	var configPEM string
++	if ech {
++		var keys string
++		var err error
++		configPEM, keys, err = ECHKeygenDefault("example.com")
++		if err != nil {
++			t.Fatal(err)
++		}
++		parsed, err := parseECHKeys([]byte(keys))
++		if err != nil {
++			t.Fatal(err)
++		}
++		server.TLS = &ctls.Config{EncryptedClientHelloKeys: parsed}
++	}
++	server.StartTLS()
++	t.Cleanup(server.Close)
++	return server, configPEM
++}
++func testConfig(t *testing.T, server *httptest.Server, echPEM, strategy string) *sniConfig {
++	t.Helper()
++	roots := x509.NewCertPool()
++	roots.AddCert(server.Certificate())
++	opts := option.OutboundTLSOptions{Enabled: true, ServerName: "example.com", Certificate: []string{string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))}, SNISpoof: &option.SNISpoofOptions{Strategy: strategy, FragmentSize: 128, AttemptTimeoutMS: 1000, TotalTimeoutMS: 5000, MaxCandidates: 2, RetryAfterSeconds: 10, CandidateIPs: []string{"127.0.0.1"}}}
++	if echPEM != "" {
++		opts.SNISpoof.RequireECH = true
++		opts.ECH = &option.OutboundECHOptions{Enabled: true, Config: []string{echPEM}}
++	}
++	config, err := NewClientWithOptions(ClientOptions{Context: context.Background(), Options: opts, ServerAddress: "example.com"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	return config.(*sniConfig)
++}
++func TestSNISpoofRealTLSAndECH(t *testing.T) {
++	for _, ech := range []bool{false, true} {
++		server, echPEM := testServer(t, ech)
++		for _, strategy := range []string{"none", "sni", "record", "chunks", "auto"} {
++			t.Run(strategy+map[bool]string{true: "-ECH", false: ""}[ech], func(t *testing.T) {
++				config := testConfig(t, server, echPEM, strategy)
++				raw := &testSNIDialer{address: server.Listener.Addr().String()}
++				conn, err := NewDialer(raw, config).DialTLSContext(context.Background(), M.ParseSocksaddr("192.0.2.1:443"))
++				if err != nil {
++					t.Fatal(err)
++				}
++				defer conn.Close()
++				if conn.ConnectionState().ECHAccepted != ech {
++					t.Fatal("incorrect ECH state")
++				}
++				if len(conn.ConnectionState().VerifiedChains) == 0 {
++					t.Fatal("certificate not verified")
++				}
++				_, err = io.WriteString(conn, "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")
++				if err != nil {
++					t.Fatal(err)
++				}
++				response, err := io.ReadAll(conn)
++				if err != nil {
++					t.Fatal(err)
++				}
++				if !strings.Contains(string(response), "204 No Content") {
++					t.Fatalf("request failed: %s", response)
++				}
++			})
++		}
++	}
++}
++func TestSNISpoofRejectsUnacceptedECH(t *testing.T) {
++	server, _ := testServer(t, false)
++	config := testConfig(t, server, "", "none")
++	config.settings.RequireECH = true // Exercise the explicit acceptance guard independently.
++	_, err := NewDialer(&testSNIDialer{address: server.Listener.Addr().String()}, config).DialTLSContext(context.Background(), M.ParseSocksaddr("127.0.0.1:443"))
++	if err == nil || !strings.Contains(err.Error(), "ECH was not accepted") {
++		t.Fatalf("expected fail closed, got %v", err)
++	}
++}
++func TestSNISpoofCooldownAndNetworkReset(t *testing.T) {
++	server, _ := testServer(t, false)
++	config := testConfig(t, server, "", "none")
++	config.settings.CandidateIPs = nil
++	raw := &testSNIDialer{address: server.Listener.Addr().String()}
++	dialer := NewDialer(raw, config)
++	for i := 0; i < 2; i++ {
++		_, _ = dialer.DialTLSContext(context.Background(), M.ParseSocksaddr("192.0.2.1:443"))
++	}
++	count, _ := raw.calls.Load("192.0.2.1")
++	if count.(*atomic.Int32).Load() != 1 {
++		t.Fatal("cooldown ignored")
++	}
++	ResetSNISpoof(config)
++	_, _ = dialer.DialTLSContext(context.Background(), M.ParseSocksaddr("192.0.2.1:443"))
++	if count.(*atomic.Int32).Load() != 2 {
++		t.Fatal("replacement network was quarantined")
++	}
++}
++func TestSNICandidatesBoundedAndPrioritized(t *testing.T) {
++	ips := SNICandidates("192.0.2.1", option.SNISpoofOptions{CandidateIPs: []string{"192.0.2.2", "2001:db8::/120"}, DiscoverCloudflare: true, MaxCandidates: 8})
++	if len(ips) != 8 || ips[0] != "192.0.2.2" {
++		t.Fatal(ips)
++	}
++	seen := map[string]bool{}
++	for _, ip := range ips {
++		if seen[ip] {
++			t.Fatal("duplicate")
++		}
++		seen[ip] = true
++	}
++}
++func TestSNISpoofDisabledUsesOriginalDialer(t *testing.T) {
++	server, _ := testServer(t, false)
++	config := testConfig(t, server, "", "none")
++	if _, ok := NewDialer(&testSNIDialer{}, config.Config).(*defaultDialer); !ok {
++		t.Fatal("disabled profile changed dialer")
++	}
++}
++func TestSNISpoofCanceledParent(t *testing.T) {
++	server, _ := testServer(t, false)
++	config := testConfig(t, server, "", "none")
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	start := time.Now()
++	_, err := NewDialer(&testSNIDialer{address: server.Listener.Addr().String()}, config).DialTLSContext(ctx, M.ParseSocksaddr("127.0.0.1:443"))
++	if err == nil || time.Since(start) > time.Second {
++		t.Fatal("cancellation ignored")
++	}
++}
+diff --git a/common/tls/snispoof_utls_test.go b/common/tls/snispoof_utls_test.go
+new file mode 100644
+index 000000000..3602abc7d
+--- /dev/null
++++ b/common/tls/snispoof_utls_test.go
+@@ -0,0 +1,29 @@
++//go:build with_utls
++
++package tls
++
++import (
++	"context"
++	"encoding/pem"
++	"testing"
++
++	"github.com/sagernet/sing-box/option"
++	M "github.com/sagernet/sing/common/metadata"
++)
++
++func TestSNISpoofUTLSWithAcceptedECH(t *testing.T) {
++	server, echPEM := testServer(t, true)
++	opts := option.OutboundTLSOptions{Enabled: true, ServerName: "example.com", Certificate: []string{string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))}, UTLS: &option.OutboundUTLSOptions{Enabled: true, Fingerprint: "chrome"}, ECH: &option.OutboundECHOptions{Enabled: true, Config: []string{echPEM}}, SNISpoof: &option.SNISpoofOptions{Strategy: "record", RequireECH: true, MaxCandidates: 1, AttemptTimeoutMS: 3000, TotalTimeoutMS: 4000}}
++	config, err := NewClientWithOptions(ClientOptions{Context: context.Background(), Options: opts, ServerAddress: "example.com"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	conn, err := NewDialer(&testSNIDialer{address: server.Listener.Addr().String()}, config).DialTLSContext(context.Background(), M.ParseSocksaddr("127.0.0.1:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer conn.Close()
++	if !conn.ConnectionState().ECHAccepted {
++		t.Fatal("uTLS did not report accepted ECH")
++	}
++}
+diff --git a/common/tls/utls_client.go b/common/tls/utls_client.go
+index 16d0352d0..b50a0ec06 100644
+--- a/common/tls/utls_client.go
++++ b/common/tls/utls_client.go
+@@ -134,6 +134,7 @@ func (c *utlsConnWrapper) ConnectionState() tls.ConnectionState {
+ 	return tls.ConnectionState{
+ 		Version:                     state.Version,
+ 		HandshakeComplete:           state.HandshakeComplete,
++		ECHAccepted:                 state.ECHAccepted,
+ 		DidResume:                   state.DidResume,
+ 		CipherSuite:                 state.CipherSuite,
+ 		NegotiatedProtocol:          state.NegotiatedProtocol,
+diff --git a/option/snispoof.go b/option/snispoof.go
+new file mode 100644
+index 000000000..f10e613dc
+--- /dev/null
++++ b/option/snispoof.go
+@@ -0,0 +1,22 @@
++package option
++
++// SNISpoofOptions is an opt-in, rootless TLS connection policy. It never
++// replaces the verified server identity. Optional fake packets use rootless TCP.
++type SNISpoofOptions struct {
++	FakeEnabled        bool     `json:"fake_enabled,omitempty"`
++	FakeSNI            string   `json:"fake_sni,omitempty"`
++	FakeTTL            int      `json:"fake_ttl,omitempty"`
++	FakeAutoTTL        bool     `json:"fake_auto_ttl,omitempty"`
++	FakeDelayMS        int      `json:"fake_delay_ms,omitempty"`
++	Strategy           string   `json:"strategy,omitempty"`
++	FragmentSize       int      `json:"fragment_size,omitempty"`
++	DelayMS            int      `json:"delay_ms,omitempty"`
++	RequireECH         bool     `json:"require_ech,omitempty"`
++	CandidateIPs       []string `json:"candidate_ips,omitempty"`
++	DiscoverCloudflare bool     `json:"discover_cloudflare,omitempty"`
++	MaxCandidates      int      `json:"max_candidates,omitempty"`
++	AttemptTimeoutMS   int      `json:"attempt_timeout_ms,omitempty"`
++	TotalTimeoutMS     int      `json:"total_timeout_ms,omitempty"`
++	RetryAfterSeconds  int      `json:"retry_after_seconds,omitempty"`
++	Diagnostics        bool     `json:"diagnostics,omitempty"`
++}
+diff --git a/option/tls.go b/option/tls.go
+index 5c807d676..80971876a 100644
+--- a/option/tls.go
++++ b/option/tls.go
+@@ -105,6 +105,7 @@ func (o *InboundTLSOptionsContainer) ReplaceInboundTLSOptions(options *InboundTL
+ }
+ 
+ type OutboundTLSOptions struct {
++	SNISpoof                   *SNISpoofOptions                    `json:"snispoof,omitempty"`
+ 	Enabled                    bool                                `json:"enabled,omitempty"`
+ 	Engine                     string                              `json:"engine,omitempty" enum:"go,apple,windows"`
+ 	DisableSNI                 bool                                `json:"disable_sni,omitempty"`
+diff --git a/protocol/http/outbound.go b/protocol/http/outbound.go
+index 48c4be6b6..25b10b827 100644
+--- a/protocol/http/outbound.go
++++ b/protocol/http/outbound.go
+@@ -27,6 +27,7 @@ type Outbound struct {
+ 	outbound.Adapter
+ 	logger logger.ContextLogger
+ 	client *sHTTP.Client
++	dialer N.Dialer
+ }
+ 
+ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.HTTPOutboundOptions) (adapter.Outbound, error) {
+@@ -41,6 +42,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
+ 	return &Outbound{
+ 		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHTTP, tag, []string{N.NetworkTCP}, options.DialerOptions),
+ 		logger:  logger,
++		dialer:  detour,
+ 		client: sHTTP.NewClient(sHTTP.Options{
+ 			Dialer:   detour,
+ 			Server:   options.ServerOptions.Build(),
+@@ -63,3 +65,5 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination
+ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+ 	return nil, os.ErrInvalid
+ }
++
++func (h *Outbound) InterfaceUpdated(ctx context.Context) { tls.ResetSNISpoofDialer(h.dialer) }
+diff --git a/protocol/trojan/outbound.go b/protocol/trojan/outbound.go
+index 9abe76d45..141187b5e 100644
+--- a/protocol/trojan/outbound.go
++++ b/protocol/trojan/outbound.go
+@@ -114,6 +114,7 @@ func (h *Outbound) MultiplexEnabled() bool {
+ }
+ 
+ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
++	tls.ResetSNISpoof(h.tlsConfig)
+ 	if h.transport != nil {
+ 		h.transport.Close()
+ 	}
+diff --git a/protocol/vless/outbound.go b/protocol/vless/outbound.go
+index 1356a5897..34e9068e5 100644
+--- a/protocol/vless/outbound.go
++++ b/protocol/vless/outbound.go
+@@ -134,6 +134,7 @@ func (h *Outbound) MultiplexEnabled() bool {
+ }
+ 
+ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
++	tls.ResetSNISpoof(h.tlsConfig)
+ 	if h.transport != nil {
+ 		h.transport.Close()
+ 	}
+diff --git a/protocol/vmess/outbound.go b/protocol/vmess/outbound.go
+index 7b16fc906..c366ca9d6 100644
+--- a/protocol/vmess/outbound.go
++++ b/protocol/vmess/outbound.go
+@@ -112,6 +112,7 @@ func (h *Outbound) MultiplexEnabled() bool {
+ }
+ 
+ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
++	tls.ResetSNISpoof(h.tlsConfig)
+ 	if h.transport != nil {
+ 		h.transport.Close()
+ 	}
+diff --git a/transport/v2raygrpc/client.go b/transport/v2raygrpc/client.go
+index 7c5e87cad..245b9d288 100644
+--- a/transport/v2raygrpc/client.go
++++ b/transport/v2raygrpc/client.go
+@@ -39,7 +39,12 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
+ 		if len(tlsConfig.NextProtos()) == 0 {
+ 			tlsConfig.SetNextProtos([]string{http2.NextProtoTLS})
+ 		}
+-		dialOptions = append(dialOptions, grpc.WithTransportCredentials(NewTLSTransportCredentials(tlsConfig)))
++		if tls.IsSNISpoof(tlsConfig) {
++			dialer = tls.NewDialer(dialer, tlsConfig)
++			dialOptions = append(dialOptions, grpc.WithTransportCredentials(insecure.NewCredentials()))
++		} else {
++			dialOptions = append(dialOptions, grpc.WithTransportCredentials(NewTLSTransportCredentials(tlsConfig)))
++		}
+ 		if tlsConfig.ServerName() != "" {
+ 			dialOptions = append(dialOptions, grpc.WithAuthority(tlsConfig.ServerName()))
+ 		}
+diff --git a/transport/v2raygrpclite/client.go b/transport/v2raygrpclite/client.go
+index b2aab911f..a77d9745e 100644
+--- a/transport/v2raygrpclite/client.go
++++ b/transport/v2raygrpclite/client.go
+@@ -28,6 +28,7 @@ var defaultClientHeader = http.Header{
+ }
+ 
+ type Client struct {
++	sniTimeout time.Duration
+ 	ctx        context.Context
+ 	serverAddr M.Socksaddr
+ 	transport  *http2.Transport
+@@ -44,6 +45,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
+ 		host = serverAddr.String()
+ 	}
+ 	client := &Client{
++		sniTimeout: tls.SNISpoofTimeout(tlsConfig),
+ 		ctx:        ctx,
+ 		serverAddr: serverAddr,
+ 		options:    options,
+@@ -88,7 +90,21 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
+ 	}
+ 	request = request.WithContext(ctx)
+ 	conn := newLateGunConn(pipeInWriter)
++	stopInitial := func() {}
++	if c.sniTimeout > 0 {
++		// A successful DialContext transfers ownership to the returned stream.
++		// Mux may cancel its dial context immediately; retain request lifetime
++		// until stream close, instance close, or a bounded initial response wait.
++		requestCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
++		stopLife := context.AfterFunc(c.ctx, cancel)
++		timer := time.AfterFunc(c.sniTimeout, cancel)
++		stopInitial = func() { timer.Stop() }
++		conn = newSafeLateGunConn(pipeInWriter, func() { timer.Stop(); stopLife(); cancel() })
++		context.AfterFunc(requestCtx, func() { conn.setup(nil, requestCtx.Err()) })
++		request = request.WithContext(requestCtx)
++	}
+ 	go func() {
++		defer stopInitial()
+ 		response, err := c.transport.RoundTrip(request)
+ 		if err != nil {
+ 			conn.setup(nil, err)
+diff --git a/transport/v2raygrpclite/conn.go b/transport/v2raygrpclite/conn.go
+index 5feafbb68..ab391c15c 100644
+--- a/transport/v2raygrpclite/conn.go
++++ b/transport/v2raygrpclite/conn.go
+@@ -9,6 +9,7 @@ import (
+ 	"os"
+ 	"time"
+ 
++	"github.com/sagernet/sing-box/common/snispoof"
+ 	"github.com/sagernet/sing/common"
+ 	"github.com/sagernet/sing/common/baderror"
+ 	"github.com/sagernet/sing/common/buf"
+@@ -21,6 +22,7 @@ import (
+ var _ net.Conn = (*GunConn)(nil)
+ 
+ type GunConn struct {
++	safeReader    *snispoof.LateReader
+ 	rawReader     io.Reader
+ 	reader        *std_bufio.Reader
+ 	writer        io.Writer
+@@ -47,6 +49,10 @@ func newLateGunConn(writer io.Writer) *GunConn {
+ }
+ 
+ func (c *GunConn) setup(reader io.Reader, err error) {
++	if c.safeReader != nil {
++		c.safeReader.Setup(reader, err)
++		return
++	}
+ 	if reader != nil {
+ 		c.rawReader = reader
+ 		c.reader = std_bufio.NewReader(reader)
+@@ -167,3 +173,8 @@ func (c *GunConn) SetWriteDeadline(t time.Time) error {
+ func (c *GunConn) NeedAdditionalReadDeadline() bool {
+ 	return true
+ }
++
++func newSafeLateGunConn(writer io.Writer, cancel func()) *GunConn {
++	r := snispoof.NewLateReader(cancel)
++	return &GunConn{rawReader: r, reader: std_bufio.NewReader(r), writer: writer, safeReader: r}
++}
+diff --git a/transport/v2rayhttp/client.go b/transport/v2rayhttp/client.go
+index 6c327cd65..3ace85d2d 100644
+--- a/transport/v2rayhttp/client.go
++++ b/transport/v2rayhttp/client.go
+@@ -24,6 +24,7 @@ import (
+ var _ adapter.V2RayClientTransport = (*Client)(nil)
+ 
+ type Client struct {
++	sniTimeout time.Duration
+ 	ctx        context.Context
+ 	dialer     N.Dialer
+ 	serverAddr M.Socksaddr
+@@ -75,6 +76,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
+ 		requestURL.Path = "/" + requestURL.Path
+ 	}
+ 	return &Client{
++		sniTimeout: tls.SNISpoofTimeout(tlsConfig),
+ 		ctx:        ctx,
+ 		dialer:     dialer,
+ 		serverAddr: serverAddr,
+@@ -137,7 +139,18 @@ func (c *Client) dialHTTP2(ctx context.Context) (net.Conn, error) {
+ 		request.Host = c.host[rand.Intn(hostLen)]
+ 	}
+ 	conn := NewLateHTTPConn(pipeInWriter)
++	stopInitial := func() {}
++	if c.sniTimeout > 0 {
++		requestCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
++		stopLife := context.AfterFunc(c.ctx, cancel)
++		timer := time.AfterFunc(c.sniTimeout, cancel)
++		stopInitial = func() { timer.Stop() }
++		conn = NewSafeLateHTTPConn(pipeInWriter, func() { timer.Stop(); stopLife(); cancel() })
++		context.AfterFunc(requestCtx, func() { conn.Setup(nil, requestCtx.Err()) })
++		request = request.WithContext(requestCtx)
++	}
+ 	go func() {
++		defer stopInitial()
+ 		response, err := c.transport.RoundTrip(request)
+ 		if err != nil {
+ 			conn.Setup(nil, err)
+@@ -152,6 +165,12 @@ func (c *Client) dialHTTP2(ctx context.Context) (net.Conn, error) {
+ }
+ 
+ func (c *Client) Close() error {
++	if c.sniTimeout > 0 {
++		// SNISpoof uses TLS/HTTP2: ResetTransport returns the same pointer.
++		// Avoid publishing a redundant write while RoundTrip reads it.
++		ResetTransport(c.transport)
++		return nil
++	}
+ 	c.transport = ResetTransport(c.transport)
+ 	return nil
+ }
+diff --git a/transport/v2rayhttp/conn.go b/transport/v2rayhttp/conn.go
+index b339a7530..79e00e394 100644
+--- a/transport/v2rayhttp/conn.go
++++ b/transport/v2rayhttp/conn.go
+@@ -11,6 +11,7 @@ import (
+ 	"sync"
+ 	"time"
+ 
++	"github.com/sagernet/sing-box/common/snispoof"
+ 	"github.com/sagernet/sing-box/log"
+ 	"github.com/sagernet/sing/common"
+ 	"github.com/sagernet/sing/common/baderror"
+@@ -130,10 +131,11 @@ func (c *HTTPConn) Upstream() any {
+ }
+ 
+ type HTTP2Conn struct {
+-	reader io.Reader
+-	writer io.Writer
+-	create chan struct{}
+-	err    error
++	safeReader *snispoof.LateReader
++	reader     io.Reader
++	writer     io.Writer
++	create     chan struct{}
++	err        error
+ }
+ 
+ func NewHTTPConn(reader io.Reader, writer io.Writer) HTTP2Conn {
+@@ -151,6 +153,10 @@ func NewLateHTTPConn(writer io.Writer) *HTTP2Conn {
+ }
+ 
+ func (c *HTTP2Conn) Setup(reader io.Reader, err error) {
++	if c.safeReader != nil {
++		c.safeReader.Setup(reader, err)
++		return
++	}
+ 	c.reader = reader
+ 	c.err = err
+ 	close(c.create)
+@@ -265,3 +271,8 @@ func DupContext(ctx context.Context) context.Context {
+ 	}
+ 	return log.ContextWithID(context.Background(), id)
+ }
++
++func NewSafeLateHTTPConn(writer io.Writer, cancel func()) *HTTP2Conn {
++	r := snispoof.NewLateReader(cancel)
++	return &HTTP2Conn{reader: r, writer: writer, safeReader: r}
++}

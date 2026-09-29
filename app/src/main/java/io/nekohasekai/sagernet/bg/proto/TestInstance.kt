@@ -13,7 +13,7 @@ import libcore.Libcore
 import moe.matsuri.nb4a.net.LocalResolverImpl
 import kotlin.coroutines.suspendCoroutine
 
-class TestInstance(profile: ProxyEntity, val link: String, private val timeout: Int) :
+class TestInstance(profile: ProxyEntity, val link: String, private val timeout: Int, private val physicalNetworkTest: Boolean = false) :
     BoxInstance(profile) {
 
     suspend fun doTest(): Int {
@@ -47,7 +47,9 @@ class TestInstance(profile: ProxyEntity, val link: String, private val timeout: 
     override suspend fun loadConfig() {
         // don't call destroyAllJsi here
         if (BuildConfig.DEBUG) Logs.d(config.config)
-        box = Libcore.newSingBoxInstance(config.config, LocalResolverImpl)
+        box = if (physicalNetworkTest) Libcore.newSingBoxTestInstance(config.config, LocalResolverImpl,
+            moe.matsuri.nb4a.NativeInterface(true))
+        else Libcore.newSingBoxInstance(config.config, LocalResolverImpl)
     }
 
 }

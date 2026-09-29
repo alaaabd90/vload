@@ -29,6 +29,8 @@ jobs:
         working-directory: libcore
         run: |
           go test -race -tags with_conntrack,with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api . \
+            github.com/sagernet/sing-box/common/snispoof \
+            github.com/sagernet/sing-box/common/tls \
             github.com/matsuridayo/libneko/protect_server \
             github.com/sagernet/sing/common/bufio \
             github.com/sagernet/sing-mux \

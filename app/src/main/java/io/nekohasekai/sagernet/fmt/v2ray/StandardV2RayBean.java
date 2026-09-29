@@ -36,6 +36,10 @@ public abstract class StandardV2RayBean extends AbstractBean {
 
     public Boolean sniFragment;
 
+    // Versioned JSON envelope retains future settings through clone/export/import.
+    public Boolean snispoofEnabled;
+    public String snispoofSettings;
+
     // --------------------------------------- reality
 
 
@@ -103,6 +107,8 @@ public abstract class StandardV2RayBean extends AbstractBean {
         if (wsMaxEarlyData == null) wsMaxEarlyData = 0;
         if (allowInsecure == null) allowInsecure = false;
         if (sniFragment == null) sniFragment = false;
+        if (snispoofEnabled == null) snispoofEnabled = false;
+        if (snispoofSettings == null) snispoofSettings = "";
         // 0 maps to packet_encoding="" in V2RayFmt.kt, which enables
         // neither xudp nor packetaddr in sing-box's VLESS/VMess outbound
         // (protocol/vless/outbound.go) - that default path can't encode a
@@ -132,7 +138,7 @@ public abstract class StandardV2RayBean extends AbstractBean {
 
     @Override
     public void serialize(ByteBufferOutput output) {
-        output.writeInt(6);
+        output.writeInt(7);
         super.serialize(output);
         output.writeString(uuid);
         output.writeString(encryption);
@@ -189,6 +195,8 @@ public abstract class StandardV2RayBean extends AbstractBean {
         output.writeBoolean(tcpFastOpen);
 
         output.writeBoolean(sniFragment);
+        output.writeBoolean(Boolean.TRUE.equals(snispoofEnabled));
+        output.writeString(snispoofSettings == null ? "" : snispoofSettings);
     }
 
     @Override
@@ -287,6 +295,10 @@ public abstract class StandardV2RayBean extends AbstractBean {
 
         if (version >= 6) {
             sniFragment = input.readBoolean();
+        }
+        if (version >= 7) {
+            snispoofEnabled = input.readBoolean();
+            snispoofSettings = input.readString();
         }
     }
 

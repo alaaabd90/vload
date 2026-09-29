@@ -98,6 +98,16 @@ type BoxInstance struct {
 }
 
 func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *BoxInstance, err error) {
+	return newSingBoxInstance(config, localTransport, boxPlatformInterfaceInstance)
+}
+
+// NewSingBoxTestInstance isolates editor tests from the VPN service lifecycle.
+// Its socket callback must bind every test socket to a non-VPN Android network.
+func NewSingBoxTestInstance(config string, localTransport LocalDNSTransport, platform BoxPlatformInterface) (*BoxInstance, error) {
+	return newSingBoxInstance(config, localTransport, &boxPlatformInterfaceWrapper{testPlatform: platform})
+}
+
+func newSingBoxInstance(config string, localTransport LocalDNSTransport, platform adapter.PlatformInterface) (b *BoxInstance, err error) {
 	defer device.DeferPanicToError("NewSingBoxInstance", func(err_ error) { err = err_ })
 
 	// create box context
@@ -108,7 +118,7 @@ func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *Box
 		nekoboxAndroidCertificateProviderRegistry(),
 	)
 	ctx = service.ContextWithDefaultRegistry(ctx)
-	service.MustRegister[adapter.PlatformInterface](ctx, boxPlatformInterfaceInstance)
+	service.MustRegister[adapter.PlatformInterface](ctx, platform)
 
 	// parse options
 	var options option.Options

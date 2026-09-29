@@ -41,6 +41,8 @@ data class VmessQRCode(
     var ed: String = "",
     var eh: String = "",
     var sniFragment: String = "",
+    var snispoofEnabled: String = "",
+    var snispoofSettings: String = "",
     var enableECH: String = "",
     var echConfig: String = "",
     var enableMux: String = "",
@@ -267,6 +269,9 @@ fun StandardV2RayBean.parseDuckSoft(url: HttpUrl) {
         tcpFastOpen = it == "1"
     }
 
+    url.queryParameter("snispoofEnabled")?.let { snispoofEnabled = it == "1" }
+    url.queryParameter("snispoofSettings")?.let { snispoofSettings = it }
+
     url.queryParameter("sniFragment")?.let {
         sniFragment = it == "1"
     }
@@ -415,6 +420,8 @@ fun parseV2RayN(link: String): VMessBean {
         bean.enableECH = true
         if (vmessQRCode.echConfig.isNotBlank()) bean.echConfig = vmessQRCode.echConfig
     }
+    bean.snispoofEnabled = vmessQRCode.snispoofEnabled == "1"
+    bean.snispoofSettings = vmessQRCode.snispoofSettings
 
     if (vmessQRCode.enableMux == "1") {
         bean.enableMux = true
@@ -518,6 +525,8 @@ fun VMessBean.toV2rayN(): String {
             enableECH = "1"
             if (bean.echConfig.isNotBlank()) echConfig = bean.echConfig
         }
+        snispoofEnabled = if (bean.snispoofEnabled == true) "1" else "0"
+        snispoofSettings = bean.snispoofSettings ?: ""
 
         if (bean.enableMux) {
             enableMux = "1"
@@ -622,6 +631,9 @@ fun StandardV2RayBean.toUriVMessVLESSTrojan(isTrojan: Boolean): String {
         }
     }
 
+    builder.addQueryParameter("snispoofEnabled", if (snispoofEnabled == true) "1" else "0")
+    if (!snispoofSettings.isNullOrEmpty()) builder.addQueryParameter("snispoofSettings", snispoofSettings)
+
     if (tcpFastOpen) {
         builder.addQueryParameter("tcpFastOpen", "1")
     }
@@ -723,6 +735,7 @@ fun buildSingBoxOutboundStreamSettings(bean: StandardV2RayBean): V2RayTransportO
 }
 
 fun buildSingBoxOutboundTLS(bean: StandardV2RayBean): OutboundTLSOptions? {
+    if (bean.snispoofEnabled == true) io.nekohasekai.sagernet.fmt.snispoof.SniSpoofSettings.validate(bean, io.nekohasekai.sagernet.fmt.snispoof.SniSpoofSettings.parse(bean.snispoofSettings))
     if (bean.security != "tls") return null
     return OutboundTLSOptions().apply {
         enabled = true
@@ -753,7 +766,10 @@ fun buildSingBoxOutboundTLS(bean: StandardV2RayBean): OutboundTLSOptions? {
                 }
             }
         }
-        if (bean.sniFragment) {
+        if (bean.snispoofEnabled == true) {
+            io.nekohasekai.sagernet.fmt.snispoof.SniSpoofSettings.configure(bean, this)
+        }
+        if (bean.sniFragment && bean.snispoofEnabled != true) {
             // record_fragment must be set for sing-box to apply fragmentation at
             // all - it only wraps the conn with tf.NewConn when record_fragment is
             // true (see common/tls/std_client.go), fragment alone has no effect.

@@ -21,7 +21,7 @@ import (
 
 var boxPlatformInterfaceInstance adapter.PlatformInterface = &boxPlatformInterfaceWrapper{}
 
-type boxPlatformInterfaceWrapper struct{}
+type boxPlatformInterfaceWrapper struct{ testPlatform BoxPlatformInterface }
 
 func (w *boxPlatformInterfaceWrapper) ReadWIFIState(ctx context.Context) adapter.WIFIState {
 	state := strings.Split(intfBox.WIFIState(), ",")
@@ -44,6 +44,9 @@ func (w *boxPlatformInterfaceWrapper) UsePlatformAutoDetectInterfaceControl() bo
 }
 
 func (w *boxPlatformInterfaceWrapper) AutoDetectInterfaceControl(fd int) error {
+	if w.testPlatform != nil {
+		return w.testPlatform.AutoDetectInterfaceControl(int32(fd))
+	}
 	// call protect_path
 	if !isBgProcess {
 		return sendFdToProtect(fd, "protect_path")

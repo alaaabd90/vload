@@ -34,6 +34,8 @@ fun parseHttp(link: String): HttpBean {
         }
         httpUrl.queryParameter("tcpFastOpen")?.let { tcpFastOpen = it == "1" }
         httpUrl.queryParameter("sniFragment")?.let { sniFragment = it == "1" }
+        httpUrl.queryParameter("snispoofEnabled")?.let { snispoofEnabled = it == "1" }
+        httpUrl.queryParameter("snispoofSettings")?.let { snispoofSettings = it }
         httpUrl.queryParameter("enableMux")?.let {
             enableMux = it == "1"
             httpUrl.queryParameter("muxPadding")?.let { padding -> muxPadding = padding == "1" }
@@ -75,6 +77,8 @@ fun HttpBean.toUri(): String {
 
     if (tcpFastOpen) builder.addQueryParameter("tcpFastOpen", "1")
     if (sniFragment) builder.addQueryParameter("sniFragment", "1")
+    builder.addQueryParameter("snispoofEnabled", if (snispoofEnabled == true) "1" else "0")
+    if (!snispoofSettings.isNullOrEmpty()) builder.addQueryParameter("snispoofSettings", snispoofSettings)
     if (enableMux) {
         builder.addQueryParameter("enableMux", "1")
         if (muxPadding) builder.addQueryParameter("muxPadding", "1")

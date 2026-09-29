@@ -1891,6 +1891,7 @@ public class SingBoxOptions {
     }
 
     public static class OutboundTLSOptions extends SingBoxOption {
+        public java.util.Map<String, Object> snispoof;
 
         public Boolean enabled;
 

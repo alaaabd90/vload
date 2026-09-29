@@ -1,3 +1,12 @@
+## v1.4.40 - profile SNISpoof
+
+- Add rootless SNISpoof controls inside each supported TLS profile, with fake ClientHello injection, fragmentation, bounded TTL retries and optional ECH.
+- New SNISpoof configurations default to api.twitter.com, TTL 6 with automatic lower-TTL retries, automatic fragmentation and required ECH off. The real server hostname and transport settings remain unchanged.
+- Preserve all saved SNISpoof options through normal and device-locked export/import, including when SNISpoof is disabled. Existing custom settings are not replaced by defaults.
+- Preserve legacy fragmentation, ECH and certificate preferences when SNISpoof is disabled. Certificate verification is enforced while enabled.
+
+Validation: native race tests and four-ABI local builds passed. Nine Android emulator tests passed. Physical-phone tests verified exact normal and HWID-locked file/import/database round trips with SNISpoof on and off. The final local LTE sample passed 21/24 HTTPS requests; three requests failed. Success depends on the network path and TTL; this release does not guarantee bypass on every network.
+
 ## v1.4.39 - idle preconnection accounting
 
 - Do not treat successfully opened connections that have not sent a request as pending responses. Accumulated idle preconnections could previously displace browsing from a responsive network onto a slower one.

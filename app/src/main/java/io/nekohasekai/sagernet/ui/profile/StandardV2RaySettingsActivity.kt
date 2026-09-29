@@ -41,6 +41,8 @@ abstract class StandardV2RaySettingsActivity : ProfileSettingsActivity<StandardV
     private val alpn = pbm.add(PreferenceBinding(Type.Text, "alpn"))
     private val certificates = pbm.add(PreferenceBinding(Type.Text, "certificates"))
     private val allowInsecure = pbm.add(PreferenceBinding(Type.Bool, "allowInsecure"))
+    private val snispoofEnabled = pbm.add(PreferenceBinding(Type.Bool, "snispoofEnabled"))
+    private var snispoofEditor: SniSpoofEditor? = null
     private val sniFragment = pbm.add(PreferenceBinding(Type.Bool, "sniFragment"))
     private val utlsFingerprint = pbm.add(PreferenceBinding(Type.Text, "utlsFingerprint"))
     private val realityPubKey = pbm.add(PreferenceBinding(Type.Text, "realityPubKey"))
@@ -62,10 +64,12 @@ abstract class StandardV2RaySettingsActivity : ProfileSettingsActivity<StandardV
 
         tmpBean = this // copy bean
         pbm.writeToCacheAll(this)
+        SniSpoofEditor.cache(this)
     }
 
     override fun StandardV2RayBean.serialize() {
         pbm.fromCacheAll(this)
+        SniSpoofEditor.save(this)
     }
 
     private lateinit var securityCategory: PreferenceCategory
@@ -77,6 +81,14 @@ abstract class StandardV2RaySettingsActivity : ProfileSettingsActivity<StandardV
         savedInstanceState: Bundle?,
         rootKey: String?,
     ) {
+        if (tmpBean == null) {
+            tmpBean = (proxyEntity?.requireBean() as? StandardV2RayBean)?.clone() as? StandardV2RayBean
+                ?: createEntity().apply { initializeDefaultValues() }
+            if (tmpBean is TrojanBean) {
+                uuid.fieldName = "password"
+                password.disable = true
+            }
+        }
         addPreferencesFromResource(R.xml.standard_v2ray_preferences)
         pbm.setPreferenceFragment(this)
         securityCategory = findPreference(Key.SERVER_SECURITY_CATEGORY)!!
@@ -127,6 +139,14 @@ abstract class StandardV2RaySettingsActivity : ProfileSettingsActivity<StandardV
             }
         }
 
+        snispoofEditor = SniSpoofEditor(this@StandardV2RaySettingsActivity, this) {
+            (tmpBean!!.clone() as StandardV2RayBean).apply { serialize() }
+        }.also { it.visibility(snispoofEnabled.readBoolFromCache()) }
+        snispoofEnabled.preference.setOnPreferenceChangeListener { _, value ->
+            snispoofEditor?.visibility(value as Boolean)
+            true
+        }
+
         // menu with listener
 
         type.preference.apply {
@@ -146,6 +166,22 @@ abstract class StandardV2RaySettingsActivity : ProfileSettingsActivity<StandardV
                 true
             }
         }
+    }
+
+    override suspend fun saveAndExit() {
+        try {
+            val copy = (tmpBean!!.clone() as StandardV2RayBean).apply { serialize() }
+            if (copy.snispoofEnabled == true) {
+                io.nekohasekai.sagernet.fmt.snispoof.SniSpoofSettings.validate(copy,
+                    io.nekohasekai.sagernet.fmt.snispoof.SniSpoofSettings.parse(copy.snispoofSettings))
+            }
+        } catch (e: Exception) {
+            io.nekohasekai.sagernet.ktx.onMainDispatcher {
+                android.widget.Toast.makeText(this@StandardV2RaySettingsActivity, e.message, android.widget.Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        super.saveAndExit()
     }
 
     private fun updateView(network: String) {

@@ -10,6 +10,10 @@ plugins {
 setupApp()
 
 android {
+    testBuildType = providers.gradleProperty("instrumentationBuildType").getOrElse("debug")
+    defaultConfig {
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
     }
@@ -39,6 +43,8 @@ android {
 }
 
 dependencies {
+    androidTestImplementation("androidx.test:runner:1.5.2")
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
 
     implementation(fileTree("libs"))
 

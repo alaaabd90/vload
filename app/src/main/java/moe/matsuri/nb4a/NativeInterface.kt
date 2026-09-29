@@ -19,11 +19,26 @@ import libcore.Libcore
 import libcore.NB4AInterface
 import java.net.InetSocketAddress
 
-class NativeInterface : BoxPlatformInterface, NB4AInterface {
+class NativeInterface(private val physicalNetworkTest: Boolean = false) : BoxPlatformInterface, NB4AInterface {
 
     //  libbox interface
 
     override fun autoDetectInterfaceControl(fd: Int) {
+        if (physicalNetworkTest) {
+            if (Build.VERSION.SDK_INT < 23) throw java.io.IOException("Profile tests require Android 6 or newer")
+            val cm = SagerNet.connectivity
+            val candidates = if (Build.VERSION.SDK_INT >= 23) listOfNotNull(cm.activeNetwork) + cm.allNetworks.toList()
+                else cm.allNetworks.toList()
+            val network = candidates.firstOrNull { network ->
+                cm.getNetworkCapabilities(network)?.let {
+                    it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                        it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                } == true
+            } ?: throw java.io.IOException("No physical network available for profile test")
+            // Binding the socket bypasses the VPN even while another profile runs.
+            android.os.ParcelFileDescriptor.fromFd(fd).use { network.bindSocket(it.fileDescriptor) }
+            return
+        }
         DataStore.vpnService?.let { service ->
             if (!service.protect(fd)) throw java.io.IOException("VPN socket protection failed")
         }

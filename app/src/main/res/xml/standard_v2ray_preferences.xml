@@ -194,4 +194,33 @@
             app:useSimpleSummaryProvider="true" />
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="@string/snispoof_title">
+        <SwitchPreference app:key="snispoofEnabled" app:title="@string/snispoof_title" app:summary="@string/snispoof_summary" />
+    </PreferenceCategory>
+    <PreferenceCategory app:key="snispoof.options" app:title="@string/snispoof_options" app:isPreferenceVisible="false">
+        <SwitchPreference app:key="snispoof.fake_enabled" app:title="@string/snispoof_fake_enabled" app:summary="@string/snispoof_fake_summary" />
+        <EditTextPreference app:key="snispoof.fake_sni" app:dependency="snispoof.fake_enabled" app:title="@string/snispoof_fake_sni" app:useSimpleSummaryProvider="true" />
+        <EditTextPreference app:key="snispoof.fake_ttl" app:dependency="snispoof.fake_enabled" app:title="@string/snispoof_fake_ttl" app:useSimpleSummaryProvider="true" />
+        <SwitchPreference app:key="snispoof.fake_auto_ttl" app:dependency="snispoof.fake_enabled" app:title="@string/snispoof_fake_auto_ttl" app:summary="@string/snispoof_fake_auto_ttl_summary" />
+        <EditTextPreference app:key="snispoof.fake_delay_ms" app:dependency="snispoof.fake_enabled" app:title="@string/snispoof_fake_delay" app:useSimpleSummaryProvider="true" />
+        <ListPreference app:key="snispoof.strategy" app:title="@string/snispoof_strategy" app:entries="@array/snispoof_methods" app:entryValues="@array/snispoof_method_values" app:useSimpleSummaryProvider="true" />
+        <EditTextPreference app:key="snispoof.fragment_size" app:title="@string/snispoof_fragment_size" app:useSimpleSummaryProvider="true" />
+        <EditTextPreference app:key="snispoof.delay_ms" app:title="@string/snispoof_delay_ms" app:useSimpleSummaryProvider="true" />
+        <SwitchPreference app:key="snispoof.require_ech" app:title="@string/snispoof_require_ech" app:summary="@string/snispoof_require_ech_summary" />
+        <EditTextPreference app:key="snispoof.ech_config" app:title="@string/snispoof_ech_config" app:summary="@string/snispoof_ech_config_summary" />
+        <EditTextPreference app:key="snispoof.candidate_ips" app:title="@string/snispoof_candidate_ips" app:summary="@string/snispoof_candidate_ips_summary" />
+        <SwitchPreference app:key="snispoof.discover_cloudflare" app:title="@string/snispoof_discover_cloudflare" app:summary="@string/snispoof_discover_cloudflare_summary" />
+        <EditTextPreference app:key="snispoof.max_candidates" app:title="@string/snispoof_max_candidates" app:useSimpleSummaryProvider="true" />
+        <EditTextPreference app:key="snispoof.attempt_timeout_ms" app:title="@string/snispoof_attempt_timeout_ms" app:useSimpleSummaryProvider="true" />
+        <EditTextPreference app:key="snispoof.total_timeout_ms" app:title="@string/snispoof_total_timeout_ms" app:useSimpleSummaryProvider="true" />
+        <EditTextPreference app:key="snispoof.retry_after_seconds" app:title="@string/snispoof_retry_after_seconds" app:useSimpleSummaryProvider="true" />
+        <SwitchPreference app:key="snispoof.diagnostics" app:title="@string/snispoof_diagnostics" app:summary="@string/snispoof_diagnostics_summary" />
+        <EditTextPreference app:key="snispoof.test_url" app:title="@string/snispoof_test_url" app:useSimpleSummaryProvider="true" />
+        <Preference app:key="snispoof.test_fake" app:dependency="snispoof.fake_enabled" app:title="@string/snispoof_test_fake" app:summary="@string/snispoof_test_fake_summary" />
+        <Preference app:key="snispoof.test" app:title="@string/snispoof_test" app:summary="@string/snispoof_test_summary" />
+        <Preference app:key="snispoof.scan" app:title="@string/snispoof_scan" app:summary="@string/snispoof_scan_summary" />
+        <Preference app:key="snispoof.stop" app:title="@string/snispoof_stop" />
+        <Preference app:key="snispoof.results" app:title="@string/snispoof_results" app:summary="@string/snispoof_results_summary" />
+    </PreferenceCategory>
+
 </PreferenceScreen>
