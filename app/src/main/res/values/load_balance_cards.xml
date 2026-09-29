@@ -1,0 +1,13 @@
+<resources>
+    <string name="lb_follow_data_sim">Follow phone’s data SIM</string>
+    <string name="lb_card_name">Card name</string>
+    <string name="lb_add_card">Add Card name</string>
+    <string name="lb_card_help">Assign a VPN profile to each card. Switching mobile data in the phone changes this network’s profile automatically. Activate an eSIM before adding it. An unassigned card leaves this network unavailable.</string>
+    <string name="lb_no_cards">No additional active cards. Enable the SIM or eSIM in phone settings, grant Phone permission, then try again.</string>
+    <string name="lb_card_unavailable">Not currently active</string>
+    <string name="lb_card_remove">Remove card</string>
+    <string name="lb_card_profile_required">Add at least one Card name and VPN profile for each automatic SIM network.</string>
+    <string name="lb_card_android_required">Automatic SIM profiles require Android 11 or later and Phone permission.</string>
+    <string name="lb_card_profile_invalid">Choose an existing VPN profile. A card cannot use a load-balance profile.</string>
+    <string name="lb_card_profile_missing">Missing profile — tap to choose</string>
+</resources>

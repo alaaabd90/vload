@@ -31,6 +31,8 @@ public class LoadBalanceBean extends InternalBean {
     public int slotBSubscriptionId;
     public long slotBProxyId;
     public int slotBWeight;
+    public String slotACardProfiles;
+    public String slotBCardProfiles;
 
     @Override
     public String displayName() {
@@ -45,6 +47,8 @@ public class LoadBalanceBean extends InternalBean {
     public void initializeDefaultValues() {
         super.initializeDefaultValues();
         if (name == null) name = "";
+        if (slotACardProfiles == null) slotACardProfiles = "[]";
+        if (slotBCardProfiles == null) slotBCardProfiles = "[]";
         if (slotAProxyId == 0) slotAProxyId = -1;
         if (slotBProxyId == 0) slotBProxyId = -1;
         if (slotASubscriptionId == 0) slotASubscriptionId = -1;
@@ -55,7 +59,7 @@ public class LoadBalanceBean extends InternalBean {
 
     @Override
     public void serialize(ByteBufferOutput output) {
-        output.writeInt(0);
+        output.writeInt(1);
         output.writeInt(slotANetworkKind);
         output.writeInt(slotASubscriptionId);
         output.writeLong(slotAProxyId);
@@ -64,11 +68,13 @@ public class LoadBalanceBean extends InternalBean {
         output.writeInt(slotBSubscriptionId);
         output.writeLong(slotBProxyId);
         output.writeInt(slotBWeight);
+        output.writeString(slotACardProfiles);
+        output.writeString(slotBCardProfiles);
     }
 
     @Override
     public void deserialize(ByteBufferInput input) {
-        input.readInt(); // version
+        int version = input.readInt();
         slotANetworkKind = input.readInt();
         slotASubscriptionId = input.readInt();
         slotAProxyId = input.readLong();
@@ -77,6 +83,8 @@ public class LoadBalanceBean extends InternalBean {
         slotBSubscriptionId = input.readInt();
         slotBProxyId = input.readLong();
         slotBWeight = input.readInt();
+        slotACardProfiles = version >= 1 ? input.readString() : "[]";
+        slotBCardProfiles = version >= 1 ? input.readString() : "[]";
     }
 
     @NotNull

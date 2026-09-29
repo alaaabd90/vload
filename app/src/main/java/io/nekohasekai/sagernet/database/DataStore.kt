@@ -286,6 +286,8 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var lbSlotASubscriptionId by profileCacheStore.stringToInt(Key.LB_SLOT_A_SUBSCRIPTION_ID) { -1 }
     var lbSlotAProxyId by profileCacheStore.long(Key.LB_SLOT_A_PROXY_ID) { -1L }
     var lbSlotAWeight by profileCacheStore.stringToInt(Key.LB_SLOT_A_WEIGHT) { 50 }
+    var lbSlotACardProfiles by profileCacheStore.string("lbSlotACardProfiles") { "[]" }
+    var lbSlotBCardProfiles by profileCacheStore.string("lbSlotBCardProfiles") { "[]" }
     var lbSlotBNetworkKind by profileCacheStore.stringToInt(Key.LB_SLOT_B_NETWORK_KIND)
     var lbSlotBSubscriptionId by profileCacheStore.stringToInt(Key.LB_SLOT_B_SUBSCRIPTION_ID) { -1 }
     var lbSlotBProxyId by profileCacheStore.long(Key.LB_SLOT_B_PROXY_ID) { -1L }

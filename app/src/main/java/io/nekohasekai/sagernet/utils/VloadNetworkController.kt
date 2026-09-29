@@ -11,6 +11,7 @@ import android.os.Looper
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.ktx.Logs
 import java.util.concurrent.atomic.AtomicReferenceArray
+import java.util.concurrent.atomic.AtomicIntegerArray
 
 /** Which physical network a vload slot should be bound to. */
 sealed class NetworkSelector {
@@ -39,6 +40,31 @@ class VloadNetworkController(
 
     private val callbacks = arrayOfNulls<ConnectivityManager.NetworkCallback>(2)
     private val networks = AtomicReferenceArray<Network?>(2)
+    private val subscriptions = AtomicIntegerArray(intArrayOf(-1, -1))
+    private val following = mutableMapOf<Int, Set<Int>>()
+    private var activeSimMonitor: ActiveDataSimMonitor? = null
+
+    fun subscriptionFor(slot: Int): Int = subscriptions.get(slot)
+
+    @Synchronized
+    fun followDataSim(slot: Int, configuredCards: Set<Int>) {
+        following[slot] = configuredCards
+        stop(slot)
+        onSlotChanged(slot, null)
+        if (activeSimMonitor == null) {
+            activeSimMonitor = ActiveDataSimMonitor { activeId ->
+                synchronized(this) {
+                    following.forEach { (index, cards) ->
+                        val desired = activeId.takeIf { it in cards } ?: -1
+                        if (subscriptions.get(index) != desired || (desired >= 0 && callbacks[index] == null)) {
+                            if (desired >= 0) start(index, NetworkSelector.Sim(desired))
+                            else { stop(index); onSlotChanged(index, null) }
+                        }
+                    }
+                }
+            }.also { it.start() }
+        }
+    }
 
     fun networkFor(slot: Int): Network? = if (slot in 0..1) networks.get(slot) else null
 
@@ -46,6 +72,7 @@ class VloadNetworkController(
     fun start(slot: Int, selector: NetworkSelector) {
         require(slot == 0 || slot == 1) { "slot must be 0 or 1" }
         stop(slot)
+        subscriptions.set(slot, (selector as? NetworkSelector.Sim)?.subscriptionId ?: -1)
         // The box already exists at this point. Do not allow a slot to be
         // picked until Android actually supplies its requested network.
         onSlotChanged(slot, null)
@@ -92,6 +119,7 @@ class VloadNetworkController(
         val callback = callbacks[slot]
         callbacks[slot] = null
         networks.set(slot, null)
+        subscriptions.set(slot, -1)
         callback?.let {
             try {
                 connectivity.unregisterNetworkCallback(it)
@@ -101,7 +129,11 @@ class VloadNetworkController(
         }
     }
 
+    @Synchronized
     fun stopAll() {
+        following.clear()
+        activeSimMonitor?.stop()
+        activeSimMonitor = null
         stop(0)
         stop(1)
     }

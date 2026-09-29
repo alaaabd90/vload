@@ -1,5 +1,7 @@
 package io.nekohasekai.sagernet.fmt
 
+import io.nekohasekai.sagernet.fmt.internal.SimCardProfiles
+
 import android.widget.Toast
 import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.bg.VpnService
@@ -79,6 +81,7 @@ class ConfigBuildResult(
     var trafficMap: Map<String, List<ProxyEntity>>,
     var profileTagMap: Map<Long, String>,
     val selectorGroupId: Long,
+    val loadBalanceCardTags: Map<Int, Map<Int, String>> = emptyMap(),
 ) {
     data class IndexEntity(var chain: LinkedHashMap<Int, ProxyEntity>)
 }
@@ -103,6 +106,8 @@ fun buildConfig(
 
     val trafficMap = HashMap<String, List<ProxyEntity>>()
     val tagMap = HashMap<Long, String>()
+    val cardTags = HashMap<Int, Map<Int, String>>()
+    val automaticCards = proxy.loadBalanceBean?.let { lb -> (0..1).any { SimCardProfiles.followsDataSim(lb, it) } } == true
     // Keyed by "$proxyId:$protectPath" rather than just proxyId, so the same
     // underlying profile used for two different vload network slots (each
     // with its own protect_path) gets two independently-built outbounds
@@ -354,7 +359,7 @@ fun buildConfig(
 
             // chainTagOut: v2ray outbound tag for this chain
             var chainTagOut = ""
-            val chainTag = "c-$chainId"
+            val chainTag = "c-$chainId" + (if (automaticCards) protectPath?.let { "-$it" } ?: "" else "")
             var muxApplied = false
 
             val defaultServerDomainStrategy = SingBoxOptionsUtil.domainStrategy("server")
@@ -586,13 +591,33 @@ fun buildConfig(
         // each slot's outermost hop pinned to its own network via protect_path.
         fun buildLoadBalance(lbProxy: ProxyEntity) {
             val lb = lbProxy.loadBalanceBean!!
-            val slotAEntity = SagerDatabase.proxyDao.getById(lb.slotAProxyId)
-                ?: error("vload: Network A profile not found")
-            val slotBEntity = SagerDatabase.proxyDao.getById(lb.slotBProxyId)
-                ?: error("vload: Network B profile not found")
-
-            val slotATag = buildChain(lb.slotAProxyId, slotAEntity, protectPath = "protect_path_a")
-            val slotBTag = buildChain(lb.slotBProxyId, slotBEntity, protectPath = "protect_path_b")
+            fun buildSlot(slot: Int, legacyProfileId: Long, protectPath: String): String {
+                if (!SimCardProfiles.followsDataSim(lb, slot)) {
+                    val entity = SagerDatabase.proxyDao.getById(legacyProfileId)
+                        ?: error("vload: Network ${if (slot == 0) "A" else "B"} profile not found")
+                    return buildChain(legacyProfileId, entity, protectPath)
+                }
+                val cards = SimCardProfiles.cards(lb, slot)
+                require(cards.isNotEmpty()) { "Add a Card name and VPN profile for the automatic SIM network" }
+                val builtProfiles = mutableMapOf<Long, String>()
+                val tags = cards.associate { card ->
+                    val entity = SagerDatabase.proxyDao.getById(card.profileId)
+                        ?: error("VPN profile for ${card.cardName} no longer exists")
+                    require(entity.type != ProxyEntity.TYPE_LOAD_BALANCE) { "A card cannot use another load-balance profile" }
+                    card.subscriptionId to builtProfiles.getOrPut(card.profileId) { buildChain(card.profileId, entity, protectPath) }
+                }
+                cardTags[slot] = tags
+                val selectorTag = "vload-slot-$slot"
+                outbounds.add(Outbound_SelectorOptions().apply {
+                    type = "selector"
+                    tag = selectorTag
+                    outbounds = tags.values.distinct()
+                    default_ = outbounds.first()
+                })
+                return selectorTag
+            }
+            val slotATag = buildSlot(0, lb.slotAProxyId, "protect_path_a")
+            val slotBTag = buildSlot(1, lb.slotBProxyId, "protect_path_b")
             loadBalanceSlotTags = listOf(slotATag, slotBTag)
 
             outbounds.add(0, Outbound_WeightedOptions().apply {
@@ -1057,7 +1082,8 @@ fun buildConfig(
             proxy.id,
             trafficMap,
             tagMap,
-            if (buildSelector) group.id else -1L
+            if (buildSelector) group.id else -1L,
+            cardTags
         )
     }
 

@@ -25,6 +25,7 @@
         android:layout_marginTop="8dp" />
 
     <LinearLayout
+        android:id="@+id/fixed_profile_row"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
@@ -48,5 +49,20 @@
             android:text="@string/select_profile" />
 
     </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/card_profiles_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone" />
+
+    <Button
+        android:id="@+id/add_card_profile"
+        style="?attr/borderlessButtonStyle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/lb_add_card"
+        android:visibility="gone" />
 
 </LinearLayout>

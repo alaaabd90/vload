@@ -15,6 +15,7 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.fmt.LOCALHOST
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
+import io.nekohasekai.sagernet.fmt.internal.SimCardProfiles
 import io.nekohasekai.sagernet.fmt.internal.LoadBalanceBean
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.ui.VpnRequestActivity
@@ -57,12 +58,19 @@ class VpnService : BaseVpnService(),
     // A slot stays unavailable until cleanup of its previous network finishes.
     // Generations prevent queued cleanup from re-enabling an obsolete network.
     private val slotGeneration = AtomicLongArray(2)
+    private val cardReadyGeneration = AtomicLongArray(2)
     private val slotResetLocks = arrayOf(Mutex(), Mutex())
 
     override suspend fun startProcesses() {
         DataStore.vpnService = this
         setupVloadNetworksIfNeeded()
         super.startProcesses() // launch proxy instance
+        // Selectors are initialized by box.start(). Reconcile early callbacks
+        // after launch without restarting the VPN or the unaffected slot.
+        val lb = data.proxy?.profile?.loadBalanceBean
+        if (lb != null) for (slot in 0..1) {
+            if (SimCardProfiles.followsDataSim(lb, slot)) onVloadSlotChanged(slot, vloadNetworkController?.networkFor(slot))
+        }
     }
 
     private fun setupVloadNetworksIfNeeded() {
@@ -81,39 +89,52 @@ class VpnService : BaseVpnService(),
             NetworkSelector.WiFi
         }
 
-        val controller = VloadNetworkController { slot, network ->
-            val proxy = data.proxy
-            val delivered = proxy?.takeIf { it.isInitialized() }
-            Logs.i("vload: slot $slot network=${network?.toString() ?: "lost"} deliveredToBox=${delivered != null}")
-            val generation = slotGeneration.incrementAndGet(slot)
-            // Invalidate dials immediately; never advertise the new network
-            // before asynchronous cleanup has finished closing the old pool.
-            delivered?.box?.updateNetworkAvailability(slot, false)
-            updateUnderlyingNetwork()
-            if (delivered != null) {
-                runOnDefaultDispatcher {
-                    slotResetLocks[slot].withLock {
-                        if (data.proxy !== delivered || slotGeneration.get(slot) != generation) return@withLock
-                        val closed = delivered.box.resetSlotConnections(slot)
-                        withContext(Dispatchers.Main.immediate) {
-                            if (data.proxy === delivered && slotGeneration.get(slot) == generation) {
-                                if (closed < 0) {
-                                    Logs.w("vload: slot $slot cleanup unavailable; keeping slot disabled")
-                                } else {
-                                    delivered.box.updateNetworkAvailability(slot, network != null)
-                                    Logs.i("vload: slot $slot cleanup complete, available=${network != null}, closed=$closed")
-                                }
+        val controller = VloadNetworkController(::onVloadSlotChanged)
+        vloadNetworkController = controller
+
+        for (slot in 0..1) {
+            if (SimCardProfiles.followsDataSim(lb, slot)) {
+                controller.followDataSim(slot, SimCardProfiles.cards(lb, slot).map { it.subscriptionId }.toSet())
+            } else {
+                controller.start(slot, if (slot == 0) selectorFor(lb.slotANetworkKind, lb.slotASubscriptionId)
+                    else selectorFor(lb.slotBNetworkKind, lb.slotBSubscriptionId))
+            }
+        }
+    }
+
+    private fun onVloadSlotChanged(slot: Int, network: Network?) {
+        val proxy = data.proxy
+        val delivered = proxy?.takeIf { it.isInitialized() }
+        Logs.i("vload: slot $slot network=${network?.toString() ?: "lost"} deliveredToBox=${delivered != null}")
+        val generation = slotGeneration.incrementAndGet(slot)
+        // Invalidate dials immediately; never advertise the new network
+        // before asynchronous cleanup has finished closing the old pool.
+        delivered?.box?.updateNetworkAvailability(slot, false)
+        updateUnderlyingNetwork()
+        if (delivered != null) {
+            runOnDefaultDispatcher {
+                slotResetLocks[slot].withLock {
+                    if (data.proxy !== delivered || slotGeneration.get(slot) != generation) return@withLock
+                    val closed = delivered.box.resetSlotConnections(slot)
+                    withContext(Dispatchers.Main.immediate) {
+                        if (data.proxy === delivered && slotGeneration.get(slot) == generation) {
+                            if (closed < 0) {
+                                Logs.w("vload: slot $slot cleanup unavailable; keeping slot disabled")
+                            } else {
+                                val cards = delivered.config.loadBalanceCardTags[slot]
+                                val target = cards?.get(vloadNetworkController?.subscriptionFor(slot))
+                                val selected = cards == null || (target != null && delivered.box.selectSlotOutbound(slot, target))
+                                if (cards != null) cardReadyGeneration.set(slot, if (network != null && selected) generation else 0)
+                                delivered.box.updateNetworkAvailability(slot, network != null && selected)
+                                Logs.i("vload: slot $slot cleanup complete, available=${network != null && selected}, closed=$closed")
                             }
                         }
                     }
                 }
             }
         }
-        vloadNetworkController = controller
-
-        controller.start(0, selectorFor(lb.slotANetworkKind, lb.slotASubscriptionId))
-        controller.start(1, selectorFor(lb.slotBNetworkKind, lb.slotBSubscriptionId))
     }
+
 
     /**
      * Binds fd to the network currently held for [slot] (0 or 1), for a vload
@@ -123,9 +144,13 @@ class VpnService : BaseVpnService(),
      * fallback would silently use the default radio under the wrong slot.
      */
     fun protectSlot(fd: Int, slot: Int): Boolean {
+        if (slot !in 0..1) return false
         // Binding an existing file descriptor is unavailable on Android 5.
         // Fail the member rather than crash or silently use another network.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
+        val followsCard = data.proxy?.profile?.loadBalanceBean?.let { SimCardProfiles.followsDataSim(it, slot) } == true
+        val generation = slotGeneration.get(slot)
+        if (followsCard && cardReadyGeneration.get(slot) != generation) return false
         val network = vloadNetworkController?.networkFor(slot) ?: return false
         if (!protect(fd)) return false
         val pfd = ParcelFileDescriptor.adoptFd(fd)
@@ -133,7 +158,8 @@ class VpnService : BaseVpnService(),
             network.bindSocket(pfd.fileDescriptor)
             // Do not acknowledge a socket bound to a network that was
             // replaced while Android performed the bind.
-            vloadNetworkController?.networkFor(slot) == network
+            vloadNetworkController?.networkFor(slot) == network &&
+                (!followsCard || (slotGeneration.get(slot) == generation && cardReadyGeneration.get(slot) == generation))
         } catch (e: Exception) {
             Logs.w(e)
             false
