@@ -41,3 +41,8 @@ Validation:
 
 Android APIs: [active data SIM](https://developer.android.com/reference/android/telephony/SubscriptionManager#getActiveDataSubscriptionId()),
 [change listener](https://developer.android.com/reference/android/telephony/TelephonyCallback.ActiveDataSubscriptionIdListener).
+
+## Release CI limitation
+
+Release CI initially failed in the unchanged h2mux concurrent-transfer stress test with a closed-pipe error. Repeating that test reproduced 5 failures in 30 runs. No tests were disabled and no mux or load-balancing algorithms were changed for this release; this pre-existing intermittent stress-test failure remains unresolved.
+

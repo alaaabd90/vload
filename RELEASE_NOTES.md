@@ -6,6 +6,8 @@
 
 Validation: full native race suites and 12 Android emulator tests passed (one phone-specific test skipped). Four local APK architectures and signing certificates were verified. Installed on the Honor phone with Zain -> vpn.1 and Asia -> vpn.2; its connection check passed in 146 ms, and the user reported it working well. An independently recorded end-to-end SIM-switch trace was not captured.
 
+Release CI initially failed in the unchanged h2mux concurrent-transfer stress test with a closed-pipe error. Repeating that test reproduced 5 failures in 30 runs. No tests were disabled and no mux or load-balancing algorithms were changed for this release; this pre-existing intermittent stress-test failure remains unresolved.
+
 ## v1.4.40 - profile SNISpoof
 
 - Add rootless SNISpoof controls inside each supported TLS profile, with fake ClientHello injection, fragmentation, bounded TTL retries and optional ECH.
