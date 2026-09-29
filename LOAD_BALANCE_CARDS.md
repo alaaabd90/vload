@@ -1,7 +1,7 @@
 # Per-card VPN profiles
 
-Based on public v1.4.40 (`6e9f5fc`). Local candidate:
-`1.4.41-simcards-local`, versionCode 285.
+Based on public v1.4.40 (`6e9f5fc`). Release:
+`1.4.41`, versionCode 285.
 
 Edit a Load Balance profile, choose Network A or B, select SIM, then
 **Follow phone’s data SIM**. Use **Add Card name** to select an active SIM or
@@ -36,7 +36,8 @@ Validation:
   Tests cover legacy binary loading, card identity, inactive eSIM persistence,
   shared profiles without duplicate outbound tags, unchanged group modes and
   weights, and card editor visibility/preservation.
-- Physical Zain/Asia switching remains pending: the phone was disconnected.
+- Installed on the Honor phone and saved Zain -> vpn.1 / Asia -> vpn.2. The app connection check passed (146 ms). The user subsequently reported it working well; a separately instrumented end-to-end SIM-switch trace was not captured.
+- Release comparison with v1.4.40 confirmed identical weighted-group configuration, weights, DNS/QUIC priority and routing policy. Existing native code, mux and recovery patches are unchanged; only the slot-selector bridge and its tests are new.
 
 Android APIs: [active data SIM](https://developer.android.com/reference/android/telephony/SubscriptionManager#getActiveDataSubscriptionId()),
 [change listener](https://developer.android.com/reference/android/telephony/TelephonyCallback.ActiveDataSubscriptionIdListener).

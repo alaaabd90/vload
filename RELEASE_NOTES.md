@@ -1,3 +1,11 @@
+## v1.4.41 - VPN profiles by SIM card
+
+- In either Load Balance network, choose SIM -> Follow phone?s data SIM -> Add Card name, then assign a VPN profile to each active SIM/eSIM. The profile follows the phone?s active data SIM automatically.
+- Keep inactive card assignments saved. Unassigned cards leave that slot unavailable while the other network can continue. Activate an eSIM before adding it. Android 11+ and Phone permission are required.
+- Preserve the v1.4.40 load-balancing algorithm, weights, mux behavior, DNS/QUIC priority and existing fixed-SIM behavior. Only the opted-in slot?s card/profile selection changes.
+
+Validation: full native race suites and 12 Android emulator tests passed (one phone-specific test skipped). Four local APK architectures and signing certificates were verified. Installed on the Honor phone with Zain -> vpn.1 and Asia -> vpn.2; its connection check passed in 146 ms, and the user reported it working well. An independently recorded end-to-end SIM-switch trace was not captured.
+
 ## v1.4.40 - profile SNISpoof
 
 - Add rootless SNISpoof controls inside each supported TLS profile, with fake ClientHello injection, fragmentation, bounded TTL retries and optional ECH.
