@@ -71,7 +71,7 @@
 
     <application
         android:name="io.nekohasekai.sagernet.SagerNet"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:autoRevokePermissions="allowed"
         android:banner="@mipmap/ic_launcher"
         android:dataExtractionRules="@xml/backup_rules"
@@ -122,6 +122,7 @@
             android:name="io.nekohasekai.sagernet.ui.BlankActivity"
             android:configChanges="uiMode" />
 
+        <activity android:name="io.nekohasekai.sagernet.security.ActivationActivity" android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.MainActivity"
             android:configChanges="uiMode"

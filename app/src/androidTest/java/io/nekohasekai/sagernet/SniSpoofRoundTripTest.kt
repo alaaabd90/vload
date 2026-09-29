@@ -92,11 +92,13 @@ class SniSpoofRoundTripTest {
             // Exactly the plaintext and crypto paths used by .vload export/import.
             val file = java.io.File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "snispoof-roundtrip.vload")
             file.writeText(link); same(bean, parseLink(file.readText())); file.delete()
-            val hwid = "0123456789ABCDEF0123456789ABCDEF"
+            val hwid = LockedProfileCrypto.recipientKey()
             val locked = LockedProfileCrypto.encryptForHwid(link, hwid)
             val clear = LockedProfileCrypto.tryDecrypt(locked, hwid) as LockedProfileCrypto.DecryptResult.Decrypted
             same(bean, parseLink(clear.plaintext))
-            assertTrue(LockedProfileCrypto.tryDecrypt(locked, "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF") is LockedProfileCrypto.DecryptResult.WrongDevice)
+            val other = java.security.KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+            val wrong = LockedProfileCrypto.encryptForHwid(link, "VLP3:" + io.nekohasekai.sagernet.security.SecurityIdentity.encode(other.public.encoded))
+            assertTrue(LockedProfileCrypto.tryDecrypt(wrong, hwid) is LockedProfileCrypto.DecryptResult.WrongDevice)
         }
     }
 

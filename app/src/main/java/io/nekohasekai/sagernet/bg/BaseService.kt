@@ -359,6 +359,11 @@ class BaseService {
         }
 
         fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+            if (!io.nekohasekai.sagernet.security.Activation.isActive(this as Context)) {
+                data.notification = createNotification("Activation required")
+                stopRunner(false, "Open vload to activate this installation")
+                return Service.START_NOT_STICKY
+            }
             DataStore.baseService = this
 
             val data = data

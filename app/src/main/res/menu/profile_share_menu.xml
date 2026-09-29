@@ -39,8 +39,11 @@
                 android:id="@+id/action_standard_export_file"
                 android:title="@string/action_export_unlocked" />
             <item
+                android:id="@+id/action_config_export_hwid"
+                android:title="Lock by HWID (legacy)..." />
+            <item
                 android:id="@+id/action_config_export_locked"
-                android:title="@string/action_export_locked" />
+                android:title="Secure lock by recipient key..." />
         </menu>
     </item>
 </menu>

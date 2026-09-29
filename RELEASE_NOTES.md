@@ -1,3 +1,16 @@
+## v1.4.42 - profile protection and owner activation
+
+- Add one-time owner-signed activation for each installation. Existing users activate once on this upgrade; normal future updates preserve activation. Uninstalling or clearing data requires activation again.
+- Add secure recipient-key locked profiles and encrypted profile storage. Private recipient keys stay in Android Keystore. Secure exports require re-export after uninstall or clearing data.
+- Retain a separately labeled legacy HWID export/import option for reinstall compatibility. This format is weak: its file header allows reconstruction of the encryption key. Version-1 HWID files require re-export.
+- Move Device HWID and Profile recipient key to About, with tap-to-copy. Remove ADS and Document navigation entries. Fix long recipient-key input hiding export controls.
+- Fix release version ordering so older releases are not offered as updates. Updates use this repository's GitHub releases.
+- Preserve saved profile data and existing native VPN/load-balancing algorithms. Do not downgrade after encrypted-storage migration.
+
+Requirements: Android 6 or newer. Owner authenticator is distributed separately and requires private provisioning. Client-side checks do not make modified/rooted runtimes or source code impossible to copy.
+
+Validation: emulator security/regression tests, physical Honor activation and update persistence, encrypted storage and hardware-backed recipient key checks, locked vpn.test import matching the original serialized settings, and three successful physical VPN restart checks. No new physical SIM-switch trace was captured. Full release AndroidJUnit instrumentation has a separate desugaring conflict; release UI and a standalone signed read-only audit were tested instead. Native CI regression gates remain enabled, including the previously documented intermittent h2mux stress test.
+
 ## v1.4.41 - VPN profiles by SIM card
 
 - In either Load Balance network, choose SIM -> Follow phone?s data SIM -> Add Card name, then assign a VPN profile to each active SIM/eSIM. The profile follows the phone?s active data SIM automatically.

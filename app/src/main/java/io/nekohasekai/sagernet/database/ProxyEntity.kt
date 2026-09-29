@@ -280,6 +280,7 @@ data class ProxyEntity(
     }
 
     fun toStdLink(compact: Boolean = false): String = with(requireBean()) {
+        io.nekohasekai.sagernet.security.ExportPolicy.requireAllowed(this@ProxyEntity)
         when (this) {
             is SOCKSBean -> toUri()
             is HttpBean -> toUri()
@@ -297,6 +298,7 @@ data class ProxyEntity(
     }
 
     fun exportConfig(): Pair<String, String> {
+        io.nekohasekai.sagernet.security.ExportPolicy.requireAllowed(this)
         var name = "${requireBean().displayName()}.json"
 
         return with(requireBean()) {

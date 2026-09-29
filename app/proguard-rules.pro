@@ -1,7 +1,17 @@
 -repackageclasses ''
 -allowaccessmodification
 
--keep class io.nekohasekai.sagernet.** { *;}
+# Binary beans, Room, Gson, AIDL and native callback contracts use reflection/JNI.
+-keep class io.nekohasekai.sagernet.fmt.** { *; }
+-keep class io.nekohasekai.sagernet.database.** { *; }
+-keep class io.nekohasekai.sagernet.aidl.** { *; }
+-keep class io.nekohasekai.sagernet.ktx.** { *; }
+-keep class io.nekohasekai.sagernet.localtether.** { *; }
+-keep class libcore.** { *; }
+-keep class go.** { *; }
+-keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*
+-keepclasseswithmembers,includedescriptorclasses class * { native <methods>; }
+-keepclassmembers class * { @com.google.gson.annotations.SerializedName <fields>; }
 -keep class moe.matsuri.nb4a.** { *;}
 
 # Clean Kotlin
@@ -25,7 +35,7 @@
 # SnakeYaml
 -keep class org.yaml.snakeyaml.** { *; }
 
--dontobfuscate
+
 -keepattributes SourceFile
 
 -dontwarn java.beans.BeanInfo
@@ -45,3 +55,6 @@
 -dontwarn org.openjsse.javax.net.ssl.SSLSocket
 -dontwarn org.openjsse.net.ssl.OpenJSSE
 -dontwarn java.beans.PropertyVetoException
+
+# Release instrumentation shares this dependency with the target APK.
+-keep class androidx.tracing.** { *; }

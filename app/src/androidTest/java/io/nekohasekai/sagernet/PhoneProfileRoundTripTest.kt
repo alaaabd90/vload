@@ -24,7 +24,7 @@ class PhoneProfileRoundTripTest {
         val original = source.requireBean() as StandardV2RayBean
         val selected = DataStore.selectedProxy
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val hwid = HwidManager.compute(context)
+        val hwid = LockedProfileCrypto.recipientKey()
         var checked = 0
         for (enabled in listOf(true, false)) for (locked in listOf(false, true)) {
             val bean = original.clone() as StandardV2RayBean

@@ -137,7 +137,11 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
             if (data != null) {
                 runOnDefaultDispatcher {
                     val profiles = SagerDatabase.proxyDao.getByGroup(selectedGroup.id)
-                    val links = profiles.joinToString("\n") { it.toStdLink(compact = true) }
+                    if (profiles.any { !io.nekohasekai.sagernet.security.ExportPolicy.allowed(it) }) {
+                            onMainDispatcher { snackbar("This group contains locked profiles and cannot be exported").show() }
+                            return@runOnDefaultDispatcher
+                        }
+                        val links = profiles.joinToString("\n") { it.toStdLink(compact = true) }
                     try {
                         (requireActivity() as MainActivity).contentResolver.openOutputStream(
                             data
@@ -349,6 +353,10 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
                 R.id.action_export_clipboard -> {
                     runOnDefaultDispatcher {
                         val profiles = SagerDatabase.proxyDao.getByGroup(selectedGroup.id)
+                        if (profiles.any { !io.nekohasekai.sagernet.security.ExportPolicy.allowed(it) }) {
+                            onMainDispatcher { snackbar("This group contains locked profiles and cannot be exported").show() }
+                            return@runOnDefaultDispatcher
+                        }
                         val links = profiles.joinToString("\n") { it.toStdLink(compact = true) }
                         onMainDispatcher {
                             SagerNet.trySetPrimaryClip(links)

@@ -89,6 +89,27 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
                                 .build())
                         .addItem(
                             MaterialAboutActionItem.Builder()
+                                .text(R.string.device_hwid)
+                                .subText(io.nekohasekai.sagernet.utils.HwidManager.compute(activityContext))
+                                .setOnClickAction {
+                                    val copied = SagerNet.trySetPrimaryClip(io.nekohasekai.sagernet.utils.HwidManager.compute(activityContext))
+                                    Toast.makeText(activityContext, if (copied) "Device HWID copied" else "Could not copy Device HWID", Toast.LENGTH_SHORT).show()
+                                }.build())
+                        .addItem(
+                            MaterialAboutActionItem.Builder()
+                                .text("Profile recipient key")
+                                .subText("Tap to copy for secure locked profiles")
+                                .setOnClickAction {
+                                    runOnDefaultDispatcher {
+                                        val result = runCatching { io.nekohasekai.sagernet.utils.LockedProfileCrypto.recipientKey() }
+                                        onMainDispatcher {
+                                            val copied = result.getOrNull()?.let { SagerNet.trySetPrimaryClip(it) } == true
+                                            Toast.makeText(activityContext, if (copied) "Recipient key copied" else "Device key unavailable", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }.build())
+                        .addItem(
+                            MaterialAboutActionItem.Builder()
                                 .text(R.string.check_update_release)
                                 .setOnClickAction {
                                     checkUpdate(false)
@@ -189,23 +210,15 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
                         }
                     }.execute()
                     val release = JSONObject(Util.getStringBox(response.contentString))
-                    val releaseName = release.getString("name")
-                    val releaseUrl = release.getString("html_url")
-                    var haveUpdate = releaseName.isNotBlank()
-                    haveUpdate = if (isPreview) {
-                        if (checkPreview) {
-                            haveUpdate && releaseName != BuildConfig.PRE_VERSION_NAME
-                        } else {
-                            // User: 1.3.9 pre-1.4.0 Stable: 1.3.9 -> No update
-                            haveUpdate && releaseName != BuildConfig.VERSION_NAME
-                        }
-                    } else {
-                        // User: 1.4.0 Preview: pre-1.4.0 -> No update
-                        // User: 1.4.0 Preview: pre-1.4.1 -> Update
-                        // User: 1.4.0 Stable: 1.4.0 -> No update
-                        // User: 1.4.0 Stable: 1.4.1 -> Update
-                        haveUpdate && !releaseName.contains(BuildConfig.VERSION_NAME)
+                    val releaseName = release.optString("name").ifBlank { release.optString("tag_name") }
+                    val releaseTag = release.optString("tag_name")
+                    val releaseUrl = release.optString("html_url")
+                    require(releaseTag.isNotBlank() && releaseUrl.startsWith("https://github.com/alaaabd90/vload/releases/")) {
+                        if (checkPreview) "No preview release is available" else "Could not read the latest vload release. Try again later."
                     }
+                    val haveUpdate = io.nekohasekai.sagernet.utils.ReleaseVersion.isNewer(
+                        if (checkPreview) releaseName else releaseTag, BuildConfig.VERSION_NAME
+                    )
                     runOnMainDispatcher {
                         if (haveUpdate) {
                             val context = requireContext()
@@ -225,7 +238,11 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
                                 .setNegativeButton(R.string.no, null)
                                 .show()
                         } else {
-                            Toast.makeText(app, R.string.check_update_no, Toast.LENGTH_SHORT).show()
+                            MaterialAlertDialogBuilder(requireContext())
+                                .setTitle("No newer version available")
+                                .setMessage("Installed: ${SagerNet.appVersionNameForDisplay}\nLatest published: $releaseName")
+                                .setPositiveButton(android.R.string.ok, null)
+                                .show()
                         }
                     }
                 } catch (e: Exception) {

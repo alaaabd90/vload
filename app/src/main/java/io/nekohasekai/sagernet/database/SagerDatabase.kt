@@ -8,7 +8,7 @@ import androidx.room.TypeConverters
 import dev.matrix.roomigrant.GenerateRoomMigrations
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.SagerNet
-import io.nekohasekai.sagernet.fmt.KryoConverters
+import io.nekohasekai.sagernet.fmt.SecureDatabaseConverters
 import io.nekohasekai.sagernet.fmt.gson.GsonConverters
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
@@ -25,7 +25,7 @@ import kotlinx.coroutines.launch
         AutoMigration(from = 7, to = 8)
     ]
 )
-@TypeConverters(value = [KryoConverters::class, GsonConverters::class])
+@TypeConverters(value = [SecureDatabaseConverters::class, GsonConverters::class])
 @GenerateRoomMigrations
 abstract class SagerDatabase : RoomDatabase() {
 
@@ -39,7 +39,11 @@ abstract class SagerDatabase : RoomDatabase() {
                 .setJournalMode(JournalMode.TRUNCATE)
                 .allowMainThreadQueries()
                 .enableMultiInstanceInvalidation()
-                .fallbackToDestructiveMigration()
+                .addCallback(object : RoomDatabase.Callback() {
+                    override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                        io.nekohasekai.sagernet.security.ProfileStorage.migrate(db)
+                    }
+                })
                 .setQueryExecutor { GlobalScope.launch { it.run() } }
                 .build()
         }

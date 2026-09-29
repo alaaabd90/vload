@@ -89,7 +89,7 @@ fun Project.setupCommon() {
             buildTypes {
                 getByName("release") {
                     isShrinkResources = false
-                    isMinifyEnabled = false
+                    isMinifyEnabled = true
                 }
                 getByName("debug") {
                     applicationIdSuffix = "debug"

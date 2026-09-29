@@ -1748,6 +1748,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
             override fun onMenuItemClick(item: MenuItem): Boolean {
                 try {
+                    io.nekohasekai.sagernet.security.ExportPolicy.requireAllowed(entity)
                     currentName = entity.displayName()!!
                     when (item.itemId) {
                         R.id.action_standard_qr -> showCode(entity.toStdLink())
@@ -1772,6 +1773,9 @@ class ConfigurationFragment @JvmOverloads constructor(
                             startFilesForResult(fragment.exportUnlockedConfig, "$currentName.vload")
                         }
 
+                        R.id.action_config_export_hwid -> {
+                            (parentFragment as ConfigurationFragment).promptExportLocked(entity, legacyHwid = true)
+                        }
                         R.id.action_config_export_locked -> {
                             (parentFragment as ConfigurationFragment).promptExportLocked(entity)
                         }
@@ -1870,19 +1874,23 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
         }
 
-    fun promptExportLocked(entity: ProxyEntity) {
+    fun promptExportLocked(entity: ProxyEntity, legacyHwid: Boolean = false) {
+        if (entity.lockedImport) { snackbar(R.string.locked_profile_no_edit).show(); return }
         val input = EditText(requireContext()).apply {
-            hint = getString(R.string.export_locked_hwid_hint)
-            filters = arrayOf(android.text.InputFilter.LengthFilter(LockedProfileCrypto.HWID_BYTES))
+            hint = if (legacyHwid) "32-character Device HWID" else "VLP3: recipient public key"
+            // A full RSA public key must not expand the dialog past its action buttons.
+            setSingleLine(true)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            filters = arrayOf(android.text.InputFilter.LengthFilter(1024))
         }
         MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.action_export_locked)
-            .setMessage(R.string.export_locked_message)
+            .setTitle(if (legacyHwid) "Lock by HWID (legacy)" else "Secure lock by recipient key")
+            .setMessage(if (legacyHwid) "Use Device HWID from the recipient's About screen. Works after reinstall with the same signing key and Android user. This legacy format is weak: the file contains the information needed to reconstruct its encryption key." else "Ask the recipient to copy Profile recipient key from vload About. Paste it here. The file will only open on that installation; reinstalling loses its key.")
             .setView(input)
             .setPositiveButton(android.R.string.ok) { _, _ ->
-                val targetHwid = input.text.toString().trim().uppercase()
-                if (targetHwid.length != LockedProfileCrypto.HWID_BYTES || !targetHwid.all { it.isDigit() || it in 'A'..'F' }) {
-                    snackbar(getString(R.string.export_locked_invalid_hwid)).show()
+                val targetHwid = input.text.toString().trim()
+                if (!(if (legacyHwid) LockedProfileCrypto.validHwid(targetHwid) else LockedProfileCrypto.validRecipient(targetHwid))) {
+                    snackbar(if (legacyHwid) "Enter a valid 32-character Device HWID" else "Paste a valid VLP3: Profile recipient key, not an HWID").show()
                     return@setPositiveButton
                 }
                 runOnDefaultDispatcher {
@@ -1894,7 +1902,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                         // unnamed generic "ConfigBean".
                         val link = entity.toStdLink()
                         val fileName = entity.displayName()
-                        pendingLockedExport = LockedProfileCrypto.encryptForHwid(link, targetHwid)
+                        pendingLockedExport = if (legacyHwid) LockedProfileCrypto.encryptLegacyHwid(link, targetHwid) else LockedProfileCrypto.encryptForHwid(link, targetHwid)
                         onMainDispatcher {
                             startFilesForResult(exportLockedConfig, "$fileName.vload")
                         }

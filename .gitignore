@@ -23,3 +23,7 @@ release.keystore
 # gomobile-matsuri toolchain clone (created by libcore/init.sh), Kotlin daemon session state
 /libcore/gomobile/
 .kotlin/
+
+# Owner app maintained in its separate private repository; local audit scratch
+/authenticator/
+/libcore/.snispoof-probe/

@@ -108,7 +108,7 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
                     DataStore.editingGroup = DataStore.selectedGroupForImport()
                     createEntity().applyDefaultValues().init()
                 } else {
-                    if (proxyEntity == null) {
+                    if (proxyEntity == null || proxyEntity!!.lockedImport) {
                         onMainDispatcher {
                             finish()
                         }
@@ -137,7 +137,7 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
             val editingGroup = DataStore.editingGroup
             ProfileManager.createProfile(editingGroup, createEntity().apply { serialize() })
         } else {
-            if (proxyEntity == null) {
+            if (proxyEntity == null || proxyEntity!!.lockedImport) {
                 finish()
                 return
             }

@@ -12,6 +12,7 @@ setupApp()
 android {
     testBuildType = providers.gradleProperty("instrumentationBuildType").getOrElse("debug")
     defaultConfig {
+        minSdk = 23
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {

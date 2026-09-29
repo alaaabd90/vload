@@ -16,7 +16,6 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.bg.LocalShareServer
 import io.nekohasekai.sagernet.database.preference.EditTextPreferenceModifiers
 import io.nekohasekai.sagernet.ktx.*
-import io.nekohasekai.sagernet.utils.HwidManager
 import io.nekohasekai.sagernet.utils.Theme
 import io.nekohasekai.sagernet.widget.QRCodeDialog
 import moe.matsuri.nb4a.ui.*
@@ -64,21 +63,6 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             Theme.applyNightTheme()
             true
         }
-        val deviceHwid = findPreference<Preference>("deviceHwid")!!
-        val hwid = HwidManager.compute(requireContext())
-        deviceHwid.summary = hwid
-        deviceHwid.setOnPreferenceClickListener {
-            val success = SagerNet.trySetPrimaryClip(hwid)
-            if (context != null) {
-                android.widget.Toast.makeText(
-                    context,
-                    if (success) R.string.action_export_msg else R.string.action_export_err,
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
-            }
-            true
-        }
-
         val localProxyInfo = findPreference<Preference>("localProxyInfo")!!
         localProxyInfo.setOnPreferenceClickListener {
             val addresses = LocalShareServer.getLocalAddresses()

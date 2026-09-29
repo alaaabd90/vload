@@ -24,7 +24,6 @@ class ProxyInstance(profile: ProxyEntity, var service: BaseService.Interface? = 
         super.buildConfig()
         lastSelectorGroupId = super.config.selectorGroupId
         //
-        if (notTmp) Logs.d(config.config)
         if (notTmp && BuildConfig.DEBUG) Logs.d(JavaUtil.gson.toJson(config.trafficMap))
     }
 
@@ -38,7 +37,7 @@ class ProxyInstance(profile: ProxyEntity, var service: BaseService.Interface? = 
         super.init()
         pluginConfigs.forEach { (_, plugin) ->
             val (_, content) = plugin
-            Logs.d(content)
+            // Plugin configuration contains credentials; never log it.
         }
     }
 

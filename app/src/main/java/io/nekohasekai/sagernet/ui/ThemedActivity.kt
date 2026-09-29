@@ -50,6 +50,15 @@ abstract class ThemedActivity : AppCompatActivity {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        if (!io.nekohasekai.sagernet.security.Activation.isActive(this)) {
+            startActivity(android.content.Intent(this, io.nekohasekai.sagernet.security.ActivationActivity::class.java))
+            finish()
+        }
+    }
+
     override fun setTheme(resId: Int) {
         super.setTheme(resId)
 
